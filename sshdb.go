@@ -190,6 +190,7 @@ func (tun *tunnel) reset() error {
 		return nil
 	default:
 	}
+	// close channel to prevent duplicate resets
 	close(tun.resetChan)
 	for k := range tun.sshconns {
 		k.Conn.Close()
@@ -222,17 +223,19 @@ func (tun *tunnel) DialContext(ctx context.Context, net, addr string) (net.Conn,
 		}
 		select {
 		case <-ctxchan:
-			cl.Close()
+			cl.Close() // context cancelled, close new client connection
 			return nil, ctx.Err()
 		default:
-			tun.client = cl
 		}
-		chx := make(chan struct{})
-		tun.resetChan = chx
+		tun.client = cl
+		clientResetChannel := make(chan struct{})
+		tun.resetChan = clientResetChannel
 		go func() {
+			// if client connection close (network error)
+			// reset channel to close all db connections
 			_ = cl.Wait()
 			select {
-			case <-chx:
+			case <-clientResetChannel:
 				return
 			default:
 				tun.Close()

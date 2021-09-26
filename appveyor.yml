@@ -1,0 +1,9 @@
+version: 1.0.{build}
+platform: x64
+clone_folder: /gowork/sshdb/
+build_script:
+- sh: go build -o bin/sshdb -i
+test_script:
+- sh: go test -cover -race ./...
+artifacts:
+- path: bin/sshdb
