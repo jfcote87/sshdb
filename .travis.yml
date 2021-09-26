@@ -9,4 +9,8 @@ before_install:
 script:
   - test -z "`gofmt -l .`"
   - test -z "`golint ./...`"
-  - go test -cover -race ./...
+  - go test -race -coverprofile=coverage.txt -covermode=atomic ./...
+
+after_success:
+  - bash <(curl -s https://codecov.io/bash)
+  
