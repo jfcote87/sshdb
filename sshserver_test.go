@@ -186,12 +186,10 @@ func (d *directTCPServer) handleChannel(newChannel ssh.NewChannel) {
 	}
 	go ssh.DiscardRequests(requests)
 
-	d.wg.Add(1)
 	// Prepare teardown function
 	close := func() {
 		connection.Close()
 		rconn.Close()
-		d.wg.Done()
 	}
 
 	//pipe session between sockets
