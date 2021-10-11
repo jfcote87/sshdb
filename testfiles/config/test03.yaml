@@ -1,0 +1,5 @@
+## test03
+- hostport: ssh.example.com:22
+  user_id: me
+  pwd: bestpasswordever
+  dsn_list:

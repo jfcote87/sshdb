@@ -59,7 +59,7 @@ type directTCPServer struct {
 	laddr  []string
 	srvcfg *ssh.ServerConfig
 
-	m  sync.Mutex
+	//m  sync.Mutex
 	wg sync.WaitGroup
 }
 
@@ -238,7 +238,7 @@ func mockDBPingHandler(conn net.Conn) {
 	defer conn.Close()
 
 	// Make a buffer to hold incoming data.
-	buffer := make([]byte, 128, 128)
+	buffer := make([]byte, 128)
 	bcnt := 0
 	for {
 		for bcnt < 128 {

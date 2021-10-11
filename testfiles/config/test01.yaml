@@ -1,0 +1,5 @@
+## test01
+- hostport:
+  user_id: me
+  dsn_list:
+    - valid_dsn_string

@@ -1,0 +1,5 @@
+## test02
+- hostport: ssh.example.com:22
+  user_id:
+  dsn_list:
+    - valid_dsn_string

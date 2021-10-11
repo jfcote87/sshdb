@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Package mssql provides for mssql connection via the sshdb package
+// Package mssql provides for mssql connection via the sshdb package.
 package mssql
 
 import (
@@ -14,12 +14,11 @@ import (
 	"github.com/jfcote87/sshdb"
 )
 
-// Opener creates new mssql connectors via its NewConnector method
-var Opener sshdb.ConnectorOpener = opener("mssql")
+// TunnelDriver allows mssql connection via an sshdb tunnel.
+var TunnelDriver sshdb.Driver = tunnelDriver("mssql")
 
-// NewConnector returns a new mssql connector that uses the dialer to open ssh channel connections
-// as the underlying network connections
-func (o opener) NewConnector(dialer sshdb.Dialer, dsn string) (driver.Connector, error) {
+// OpenConnector uses passed dialer to create a connection to the mssql database defined by the dsn variable.
+func (tun tunnelDriver) OpenConnector(dialer sshdb.Dialer, dsn string) (driver.Connector, error) {
 	connector, err := mssql.NewConnector(dsn)
 	if err != nil {
 		return nil, err
@@ -27,22 +26,22 @@ func (o opener) NewConnector(dialer sshdb.Dialer, dsn string) (driver.Connector,
 
 	connector.Dialer = mssql.Dialer(dialer)
 	mMap.Lock()
-	connector.SessionInitSQL, _ = mapSessionInitSQL[dsn]
+	connector.SessionInitSQL = mapSessionInitSQL[dsn]
 	mMap.Unlock()
 	return connector, nil
 }
 
-type opener string
+type tunnelDriver string
 
-func (o opener) Name() string {
-	return string(o)
+func (tun tunnelDriver) Name() string {
+	return string(tun)
 }
 
 var mapSessionInitSQL = make(map[string]string)
 var mMap sync.Mutex
 
 // SetSessionInitSQL will add the sql to the connector's SessionInitSQL
-// value whenever the dsn values match
+// value whenever the dsn values match.
 func SetSessionInitSQL(dsn, sql string) {
 	mMap.Lock()
 	defer mMap.Unlock()

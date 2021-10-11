@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"strings"
 
 	"sync"
 	"sync/atomic"
@@ -22,73 +23,36 @@ import (
 
 var unixSocket string
 
-func TestTunnel(t *testing.T) {
-	remoteDbAddr := []string{"localhost:9223", "localhost:9224"}
-	if unixSocket > "" {
-		remoteDbAddr = append(remoteDbAddr, unixSocket)
-	}
+type testTunnelConfig struct {
+	tun          sshdb.Tunnel
+	cancel       func()
+	remoteDbAddr []string
+	connectors   []driver.Connector
+	connectTests []connTests
+	hasErr       bool
+}
 
-	sshServerAddr := "127.0.0.1:9222"
-	signer, serverSigner, err := getKeys()
-	if err != nil {
-		t.Errorf("unable to read keys - %v", err)
-		return
-	}
+type connTests struct {
+	dsn           string
+	expectedCnt   int
+	hasErr        bool
+	hasConnectErr bool
+}
 
-	ds := &directTCPServer{
-		signer: serverSigner,
-		key:    signer.PublicKey(),
-		userID: "me",
-		addr:   sshServerAddr,
-		laddr:  remoteDbAddr,
-		srvcfg: getPublicKeyServerCfg("me", signer.PublicKey()),
-	}
-
-	tunnel, err := sshdb.New(testOpener, ds.clientConfig(), ds.addr)
-	if err != nil {
-		t.Errorf("registration for %s failed %v", ds.addr, err)
-		return
-	}
-
-	srvCloseFunc, err := ds.start()
-	if err != nil {
-		t.Errorf("%v", err)
-		return
-	}
-
-	defer func() {
-		srvCloseFunc()
-	}()
-
-	type connTests struct {
-		dsn           string
-		expectedCnt   int
-		hasErr        bool
-		hasConnectErr bool
-	}
-
-	var connectTests = []connTests{
-		{dsn: remoteDbAddr[0]},
-		{dsn: remoteDbAddr[1]},
-		{dsn: "127.0.0.99:45632", hasConnectErr: true},
-		{dsn: remoteDbAddr[1]},
-		{dsn: "ERRlocal:3306", hasErr: true},
-	}
-	if len(remoteDbAddr) > 2 {
-		connectTests = append(connectTests, connTests{
-			dsn: remoteDbAddr[2], expectedCnt: 4,
-		})
-	}
+func (cfg *testTunnelConfig) testConnectPing(t *testing.T) {
+	cfg.hasErr = true
+	tunnel := cfg.tun
+	connectTests := cfg.connectTests
 
 	testLen := len(connectTests)
-	var db = make([]*sql.DB, testLen, testLen)
+	var db = make([]*sql.DB, testLen)
 	defer closeDBs(db)
 
 	var wg sync.WaitGroup // used for concurrent ping calls
 	var pingFuncs []func()
 	var totalConnections int64
 
-	var connectors = make([]driver.Connector, testLen)
+	cfg.connectors = make([]driver.Connector, testLen)
 	for i, connTest := range connectTests {
 		connector, err := tunnel.OpenConnector(connTest.dsn)
 		if err != nil {
@@ -102,7 +66,7 @@ func TestTunnel(t *testing.T) {
 			continue
 		}
 
-		connectors[i] = connector
+		cfg.connectors[i] = connector
 		db[i] = sql.OpenDB(connector)
 		idx := i
 		hasConnErr := connTest.hasConnectErr
@@ -132,43 +96,117 @@ func TestTunnel(t *testing.T) {
 	if dialerCnt != int(totalConnections) {
 		t.Errorf("expected dialer count of %d; got %d", totalConnections, dialerCnt)
 	}
-
 	if err := tunnel.Close(); err != nil {
 		t.Errorf("expect no errors with reset; got %v", err)
 		return
 	}
 	cnt, err := sshdb.ConnectionCount(tunnel)
-	if cnt != 0 {
-		t.Errorf("expected no connections; dialer count is %d", cnt)
+	if cnt != 0 || err != nil {
+		t.Errorf("expected no connections; dialer count is %d %v", cnt, err)
+		return
+	}
+	cfg.hasErr = false
+}
+
+func TestTunnel(t *testing.T) {
+	remoteDbAddr := []string{"localhost:9223", "localhost:9224"}
+	if unixSocket > "" {
+		remoteDbAddr = append(remoteDbAddr, unixSocket)
+	}
+
+	sshServerAddr := "127.0.0.1:9222"
+	signer, serverSigner, err := getKeys()
+	if err != nil {
+		t.Errorf("unable to read keys - %v", err)
 		return
 	}
 
-	dbx0 := sql.OpenDB(connectors[0])
-	if err = dbx0.PingContext(context.Background()); err != nil {
+	ds := &directTCPServer{
+		signer: serverSigner,
+		key:    signer.PublicKey(),
+		userID: "me",
+		addr:   sshServerAddr,
+		laddr:  remoteDbAddr,
+		srvcfg: getPublicKeyServerCfg("me", signer.PublicKey()),
+	}
+	srvCloseFunc, err := ds.start()
+	if err != nil {
+		t.Errorf("directTCPServer start %v", err)
+		return
+	}
+	defer srvCloseFunc()
+	tunnel, err := sshdb.New(testDriver, ds.clientConfig(), ds.addr)
+	if err != nil {
+		t.Errorf("registration for %s failed %v", ds.addr, err)
+		return
+	}
+	defer tunnel.Close()
+	cfg := &testTunnelConfig{
+		tun:          tunnel,
+		cancel:       srvCloseFunc,
+		remoteDbAddr: remoteDbAddr,
+	}
+
+	cfg.connectTests = []connTests{
+		{dsn: remoteDbAddr[0]},
+		{dsn: remoteDbAddr[1]},
+		{dsn: "127.0.0.99:45632", hasConnectErr: true},
+		{dsn: remoteDbAddr[1]},
+		{dsn: "ERRlocal:3306", hasErr: true},
+	}
+	if len(remoteDbAddr) > 2 {
+		cfg.connectTests = append(cfg.connectTests, connTests{
+			dsn: remoteDbAddr[2], expectedCnt: 4,
+		})
+	}
+
+	if cfg.testConnectPing(t); cfg.hasErr {
+		return
+	}
+	if cfg.testOpenDB(t); cfg.hasErr {
+		return
+	}
+	if cfg.testOpen(t); cfg.hasErr {
+		return
+	}
+}
+
+func (cfg *testTunnelConfig) testOpenDB(t *testing.T) {
+	cfg.hasErr = true
+	dbx0 := sql.OpenDB(cfg.connectors[0])
+	defer dbx0.Close()
+	if err := dbx0.PingContext(context.Background()); err != nil {
 		t.Errorf("unable to ping dbx0 after reset %v", err)
 		return
 	}
-	if cnt, err := sshdb.ConnectionCount(tunnel); cnt != 1 || err != nil {
+	if cnt, err := sshdb.ConnectionCount(cfg.tun); cnt != 1 || err != nil {
 		t.Errorf("expected 1 connections; dialer count is %d - error %v", cnt, err)
 	}
-	dbx1 := sql.OpenDB(connectors[testLen-1])
-	if err = dbx1.PingContext(context.Background()); err != nil {
+	dbx1 := sql.OpenDB(cfg.connectors[len(cfg.connectTests)-1])
+	defer dbx1.Close()
+	if err := dbx1.PingContext(context.Background()); err != nil {
 		t.Errorf("unable to ping db01 after reset %v", err)
 		return
 	}
-	if cnt, err := sshdb.ConnectionCount(tunnel); cnt != 2 || err != nil {
+	if cnt, err := sshdb.ConnectionCount(cfg.tun); cnt != 2 || err != nil {
 		t.Errorf("expected 2 connections; dialer count is %d - error %v", cnt, err)
 	}
 	dbx0.Close()
-	if cnt, err := sshdb.ConnectionCount(tunnel); cnt != 1 || err != nil {
+	if cnt, err := sshdb.ConnectionCount(cfg.tun); cnt != 1 || err != nil {
 		t.Errorf("expected 1 connections; dialer count is %d - error %v", cnt, err)
 	}
 	dbx1.Close()
-	if cnt, err := sshdb.ConnectionCount(tunnel); cnt != 0 || err != nil {
+	if cnt, err := sshdb.ConnectionCount(cfg.tun); cnt != 0 || err != nil {
 		t.Errorf("expected 0 connections; dialer count is %d - error %v", cnt, err)
+		return
 	}
+	cfg.hasErr = false
+}
 
-	testDriver := connectors[0].Driver()
+func (cfg *testTunnelConfig) testOpen(t *testing.T) {
+	cfg.hasErr = true
+	// test Open legacy methods
+	testDriver := cfg.connectors[0].Driver()
 	sql.Register("sshdb_tunnel", testDriver)
 
 	connxErr, err := testDriver.Open("ERRlocal:3306")
@@ -176,14 +214,12 @@ func TestTunnel(t *testing.T) {
 		t.Errorf("expected tunnel.Open to fail with dsn = ERRlocal:3306")
 		connxErr.Close()
 	}
-	// open 2 more connections
-	defer tunnel.Close()
-	connx2, err := testDriver.Open(remoteDbAddr[0])
+	connx2, err := testDriver.Open(cfg.remoteDbAddr[0])
 	if err != nil {
 		t.Errorf("expected connx2 success; got %v", err)
 	}
 	_ = connx2
-	dbx2, err := sql.Open("sshdb_tunnel", remoteDbAddr[0])
+	dbx2, err := sql.Open("sshdb_tunnel", cfg.remoteDbAddr[0])
 	if err != nil {
 		t.Errorf("dbx2 driver open %v", err)
 		return
@@ -193,10 +229,11 @@ func TestTunnel(t *testing.T) {
 		return
 	}
 	// close underlying ClientConnection to simulatate net close
-	if err := sshdb.CloseClient(tunnel); err != nil {
+	if err := sshdb.CloseClient(cfg.tun); err != nil {
 		t.Errorf("%v", err)
+		return
 	}
-	tunnel.Close() // ensure empty close
+	cfg.hasErr = false
 }
 
 func closeDBs(dbs []*sql.DB) {
@@ -250,7 +287,7 @@ func TestTunnel_Fail(t *testing.T) {
 		srvcfg: getPasswordServerCfg(matchFunc),
 	}
 
-	tunnel, err := sshdb.New(testOpener, ds.clientConfig(), ds.addr)
+	tunnel, err := sshdb.New(testDriver, ds.clientConfig(), ds.addr)
 	if err != nil {
 		t.Errorf("registration for %s failed %v", ds.addr, err)
 		return
@@ -290,6 +327,10 @@ func TestTunnel_Fail(t *testing.T) {
 	db01.Close()
 }
 
+type deadlineKeyType struct{}
+
+var deadlineKey deadlineKeyType
+
 func TestDeadlines(t *testing.T) {
 	remoteAddr, remoteDbAddr := "localhost:8222", []string{"localhost:8223"}
 	_, serverSigner, err := getKeys()
@@ -313,7 +354,7 @@ func TestDeadlines(t *testing.T) {
 		srvcfg: getPasswordServerCfg(matchFunc),
 	}
 
-	tunnel, err := sshdb.New(testOpener, ds.clientConfig(), ds.addr)
+	tunnel, err := sshdb.New(testDriver, ds.clientConfig(), ds.addr)
 	if err != nil {
 		t.Errorf("registration for %s failed %v", ds.addr, err)
 		return
@@ -334,7 +375,7 @@ func TestDeadlines(t *testing.T) {
 	db00 := sql.OpenDB(connector00)
 	defer db00.Close()
 	var deadlineType = []string{"deadline", "readdeadline", "writedeadline"}
-	ctx = context.WithValue(ctx, "deadlines", "ignore")
+	ctx = context.WithValue(ctx, deadlineKey, "ignore")
 	err = db00.PingContext(ctx)
 	elx, ok := err.(errlist)
 	if !ok {
@@ -346,7 +387,7 @@ func TestDeadlines(t *testing.T) {
 			t.Errorf("expected %s to return nil; got %v", deadlineType[i], err)
 		}
 	}
-	ctx = context.WithValue(ctx, "deadlines", "default")
+	ctx = context.WithValue(ctx, deadlineKey, "default")
 	err = db00.PingContext(ctx)
 	elx, ok = err.(errlist)
 	if !ok {
@@ -365,7 +406,7 @@ func TestNewTunnel(t *testing.T) {
 	type args struct {
 		addr string
 		cfg  *ssh.ClientConfig
-		cc   sshdb.ConnectorOpener
+		cc   sshdb.Driver
 	}
 	var cfg ssh.ClientConfig
 	tests := []struct {
@@ -374,22 +415,23 @@ func TestNewTunnel(t *testing.T) {
 		errString string
 	}{
 
-		{name: "err00", args: args{cc: testOpener, addr: "localhost:22"}, errString: "clientConfig may not be nil"},
-		{name: "err01", args: args{cc: testOpener, cfg: &cfg}, errString: "remoteAddr may not be empty"},
-		{name: "err02", args: args{addr: "localhost:22", cfg: &cfg}, errString: "opener may not be nil"},
-		{name: "ok", args: args{cc: testOpener, addr: "work:22", cfg: &cfg}, errString: ""},
+		{name: "err00", args: args{cc: testDriver, addr: "localhost:22"}, errString: "clientConfig may not be nil"},
+		{name: "err01", args: args{cc: testDriver, cfg: &cfg}, errString: "remoteAddr may not be empty"},
+		{name: "err02", args: args{cc: testDriver, addr: "ssh.example.com", cfg: &cfg}, errString: "invalid address"},
+		{name: "err03", args: args{addr: "localhost:22", cfg: &cfg}, errString: "tunnelDriver may not be nil"},
+		{name: "ok", args: args{cc: testDriver, addr: "work:22", cfg: &cfg}, errString: ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tunnel, err := sshdb.New(tt.args.cc, tt.args.cfg, tt.args.addr)
 			if err == nil && tt.errString == "" {
 
-				if getName(tunnel) != testOpener.Name() {
-					t.Errorf("expected dbname = %s; got %s", testOpener.Name(), getName(tunnel))
+				if getName(tunnel) != testDriver.Name() {
+					t.Errorf("expected dbname = %s; got %s", testDriver.Name(), getName(tunnel))
 				}
 				return
 			}
-			if err == nil || err.Error() != tt.errString {
+			if err == nil || !strings.HasPrefix(err.Error(), tt.errString) {
 				t.Errorf("expected err of %q; got %v", tt.errString, err)
 			}
 		})
@@ -419,7 +461,7 @@ func getPublicKeyServerCfg(userID string, key ssh.PublicKey) *ssh.ServerConfig {
 			if publicKeyType != key.Type() {
 				return nil, fmt.Errorf("%d expected cert type %s, got %s", len(publicKeyType), publicKeyType, key.Type())
 			}
-			if bytes.Compare(publicKeyBytes, key.Marshal()) != 0 {
+			if !bytes.Equal(publicKeyBytes, key.Marshal()) {
 				return nil, fmt.Errorf("invalid key")
 			}
 			return &ssh.Permissions{

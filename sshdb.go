@@ -3,16 +3,18 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Package sshdb provides golang.org/x/crypto/ssh client connections
-// to tunnel database connection on a remote server
+// Package sshdb provides database connections to tunnel
+// through an ssh connection to a remove server
 package sshdb
 
 import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,7 +22,7 @@ import (
 )
 
 // Tunnel is an ssh client connection that handles db
-// connection through a remote host
+// connection through a remote host.
 type Tunnel interface {
 	driver.DriverContext
 	driver.Driver
@@ -28,34 +30,40 @@ type Tunnel interface {
 }
 
 // New returns a Tunnel based upon the ssh clientConfig for creating new connectors/connections
-// via an ssh client connection.  The tunnel can host multiple db connections event to different
-// database servers. The opener for included packages is <package name>.Opener. remoteAddr
-// is the ip address of the remote host.
-func New(opener ConnectorOpener, clientConfig *ssh.ClientConfig, remoteAddr string) (Tunnel, error) {
+// via an ssh client connection.  The tunnel can host multiple db connections to different
+// database servers. The tunnelDriver is a sshdb.Driver for a specific database type. For included
+// implementations (mysql, mssql, pgx and pgx4) use <package name>.TunnelDriver.
+// remoteHostPort defines the remote ssh server address and must be in the form "host:port",
+// "host%zone:port", [host]:port" or "[host%zone]:port".  See func net.Dial for a more
+// detailed description of the hostport format.
+func New(tunnelDriver Driver, clientConfig *ssh.ClientConfig, remoteHostPort string) (Tunnel, error) {
 	if clientConfig == nil {
 		return nil, errors.New("clientConfig may not be nil")
 	}
-	if remoteAddr == "" {
+	if strings.Trim(remoteHostPort, " ") == "" {
 		return nil, errors.New("remoteAddr may not be empty")
 	}
-	if opener == nil {
-		return nil, errors.New("opener may not be nil")
+	if _, _, err := net.SplitHostPort(remoteHostPort); err != nil {
+		return nil, fmt.Errorf("invalid address - %w", err)
+	}
+	if tunnelDriver == nil {
+		return nil, errors.New("tunnelDriver may not be nil")
 	}
 	resetChan := make(chan struct{})
 	close(resetChan) // close to prevent reset calls prior to client
 	return &tunnel{
-		cfg:         clientConfig,
-		addr:        remoteAddr,
-		connCreator: opener,
-		connectors:  make(map[string]*connector),
-		sshconns:    make(map[*sshConn]bool),
-		resetChan:   resetChan,
+		cfg:          clientConfig,
+		addr:         remoteHostPort,
+		tunnelDriver: tunnelDriver,
+		connectors:   make(map[string]*connector),
+		sshconns:     make(map[*sshConn]bool),
+		resetChan:    resetChan,
 	}, nil
 }
 
-// ConnectorOpener used to create connectors for the underlying database driver.
-type ConnectorOpener interface {
-	NewConnector(dialer Dialer, dsn string) (driver.Connector, error)
+// Driver used to create connectors for the underlying database driver.
+type Driver interface {
+	OpenConnector(dialer Dialer, dsn string) (driver.Connector, error)
 	Name() string
 }
 
@@ -66,7 +74,7 @@ type connector struct {
 	tunnel Tunnel // *tunnel
 }
 
-// Driver fullfiils the Connector interface,
+// Driver ensures that the type connector fulfills the driver.Connector interface,
 func (c *connector) Driver() driver.Driver {
 	return c.tunnel
 }
@@ -82,7 +90,7 @@ type sshConn struct {
 func (sc *sshConn) Close() error {
 	tunnel := sc.tunnel
 	tunnel.m.Lock()
-	tunnel.m.Unlock()
+	defer tunnel.m.Unlock()
 	if len(tunnel.sshconns) > 1 {
 		delete(tunnel.sshconns, sc)
 		return sc.Conn.Close()
@@ -91,30 +99,30 @@ func (sc *sshConn) Close() error {
 }
 
 // SetDeadline is not implemented by the ssh tcp connection.  If
-// the connCreator implements ingnoreDeadlineError then a nil is
+// the tunnel Driver implements ingnoreDeadlineError then a nil is
 // returned rather than a not implemented error.
 func (sc *sshConn) SetDeadline(tm time.Time) error {
-	if ide, ok := sc.tunnel.connCreator.(ignoreDeadlineError); ok && ide.IgnoreDeadlineError() {
+	if ide, ok := sc.tunnel.tunnelDriver.(ignoreDeadlineError); ok && ide.IgnoreDeadlineError() {
 		return nil
 	}
 	return sc.Conn.SetDeadline(tm)
 }
 
 // SetReadDeadline is not implemented by the ssh tcp connection.  If
-// the connCreator implements ingnoreDeadlineError then a nil is
+// the tunnel Driver implements ingnoreDeadlineError then a nil is
 // returned rather than a not implemented error.
 func (sc *sshConn) SetReadDeadline(tm time.Time) error {
-	if ide, ok := sc.tunnel.connCreator.(ignoreDeadlineError); ok && ide.IgnoreDeadlineError() {
+	if ide, ok := sc.tunnel.tunnelDriver.(ignoreDeadlineError); ok && ide.IgnoreDeadlineError() {
 		return nil
 	}
 	return sc.Conn.SetReadDeadline(tm)
 }
 
 // SetDeadline is not implemented by the ssh tcp connection.  If
-// the connCreator implements ingnoreDeadlineError then a nil is
+// the tunnel Driver implements ingnoreDeadlineError then a nil is
 // returned rather than a not implemented error.
 func (sc *sshConn) SetWriteDeadline(tm time.Time) error {
-	if ide, ok := sc.tunnel.connCreator.(ignoreDeadlineError); ok && ide.IgnoreDeadlineError() {
+	if ide, ok := sc.tunnel.tunnelDriver.(ignoreDeadlineError); ok && ide.IgnoreDeadlineError() {
 		return nil
 	}
 	return sc.Conn.SetReadDeadline(tm)
@@ -124,14 +132,14 @@ type ignoreDeadlineError interface {
 	IgnoreDeadlineError() bool
 }
 
-// tunnel manages an ssh client connections and
-// creates and tracks db connections made through the client
+// tunnel manages an ssh client connections and creates
+// and tracks db connections made through the client.
 type tunnel struct {
-	cfg         *ssh.ClientConfig
-	addr        string // format <hostname>:<port>
-	connCreator ConnectorOpener
-	connectors  map[string]*connector // map of dsn to connector
-	mConn       sync.Mutex            // protects connectors
+	cfg          *ssh.ClientConfig
+	addr         string // format <hostname>:<port>
+	tunnelDriver Driver
+	connectors   map[string]*connector // map of dsn to connector
+	mConn        sync.Mutex            // protects connectors, sshconns and client
 
 	sshconns  map[*sshConn]bool // initialized on dialcontext
 	client    *ssh.Client
@@ -149,7 +157,7 @@ func (tun *tunnel) OpenConnector(dataSourceName string) (driver.Connector, error
 	if connector, ok := tun.connectors[dataSourceName]; ok {
 		return connector, nil
 	}
-	dbconnector, err := tun.connCreator.NewConnector(Dialer(tun), dataSourceName)
+	dbconnector, err := tun.tunnelDriver.OpenConnector(Dialer(tun), dataSourceName)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +169,7 @@ func (tun *tunnel) OpenConnector(dataSourceName string) (driver.Connector, error
 	return c, nil
 }
 
-// Open fulfills the driver.Driver interface
+// Open fulfills the driver.Driver interface.
 func (tun *tunnel) Open(dsn string) (driver.Conn, error) {
 	connector, err := tun.OpenConnector(dsn)
 	if err != nil {
@@ -265,7 +273,7 @@ func (tun *tunnel) newNetConn(addr string) (*sshConn, error) {
 }
 
 // ConnCount returns number of active db connections
-// managed by the tunnel
+// managed by the tunnel.
 func (tun *tunnel) ConnCount() int {
 	tun.m.Lock()
 	cnt := len(tun.sshconns)
@@ -273,12 +281,12 @@ func (tun *tunnel) ConnCount() int {
 	return cnt
 }
 
-// DBName returns name of underlying driver
+// DBName returns name of underlying driver.
 func (tun *tunnel) DBName() string {
-	return tun.connCreator.Name()
+	return tun.tunnelDriver.Name()
 }
 
-// Dialer creates a net.Conn via the tunnel's ssh client
+// Dialer creates a net.Conn via the tunnel's ssh client.
 type Dialer interface {
 	DialContext(context.Context, string, string) (net.Conn, error)
 }

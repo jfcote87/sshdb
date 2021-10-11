@@ -25,10 +25,6 @@ func ExampleNew() {
 		// values used in connecting remote host
 		remoteAddr = "remote.example.com:22"
 
-		// values used in dsn string
-		userName        = "mysql_userid"
-		password        = "mysql_password"
-		schemaName      = "mydata"
 		ctx, cancelFunc = context.WithCancel(context.Background())
 	)
 	defer cancelFunc()
@@ -41,20 +37,23 @@ func ExampleNew() {
 		},
 		HostKeyCallback: ssh.FixedHostKey(serverSigner.PublicKey()),
 	}
-	// New creates a "tunnel" for new connections.
-	tunnel, err := sshdb.New(mysql.Opener, exampleCfg, remoteAddr)
+	// New creates a "tunnel" for database connections.
+	tunnel, err := sshdb.New(mysql.TunnelDriver, exampleCfg, remoteAddr)
 	if err != nil {
-		log.Fatalf("newDriverContext failed: %v", err)
+		log.Fatalf("new tunnel create failed: %v", err)
 	}
 
-	for _, mysqlServerAddr := range [][]string{
+	for _, cfg := range []struct {
+		nettype      string
+		dbServerAddr string
+	}{
 		{"tcp", "local:3306"},          // local database on remote server tcp connection
 		{"unix", "/tmp/mysql.sock"},    // local database on remote server via unix socket
 		{"tcp", "db.example.com:3306"}, // connect to db.example.com db from remote server skirt around a firewall
 	} {
 
-		// mysqlServerAddr is a valid address for the db server beginning from the remote ssh server.
-		dsn := fmt.Sprintf("%s:%s@%s(%s)/%s?parseTime=true", userName, password, mysqlServerAddr[0], mysqlServerAddr[1], schemaName)
+		// dbServerAddr is a valid address for the db server beginning from the remote ssh server.
+		dsn := fmt.Sprintf("username:password@%s(%s)/schemaname?parseTime=true", cfg.nettype, cfg.dbServerAddr)
 
 		// open connector and then new DB
 		connector, err := tunnel.OpenConnector(dsn)
@@ -67,52 +66,42 @@ func ExampleNew() {
 
 		// ping tests connectivity
 		if err := db.PingContext(ctx); err != nil {
-			log.Printf("%v ping failed: %v", mysqlServerAddr, err)
+			log.Printf("%v ping failed: %v", cfg.dbServerAddr, err)
 		}
 	}
 }
 
 // ExampleNew_multiplehosts demonstrates how
 // connect to multiple remote hosts simultaneously
-func ExampleNew_multiplehosts() {
+func ExampleNew_multipledbservers() {
 	var (
 		// values used in connecting remote host
-		remoteAddr00, remoteAddr01 = "remote00.example.com:22", "remote00.example.com:22"
+		remoteAddr = "remote.example.com:22"
 
 		// values used in dsn string
-		userName        = "me"
-		password        = "my_favorite_password"
+		dbServerAddr    = []string{"localsrv.example.com", "cloudsvr.example.com"}
 		ctx, cancelFunc = context.WithCancel(context.Background())
 	)
 	defer cancelFunc()
-	exampleCfg00 := &ssh.ClientConfig{
+	exampleCfg := &ssh.ClientConfig{
 		User:            "jfcote87",
 		Auth:            []ssh.AuthMethod{ssh.Password("my second favorite password")},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
-	exampleCfg01 := &ssh.ClientConfig{
-		User:            "me",
-		Auth:            []ssh.AuthMethod{ssh.Password("my second favorite password")},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-	}
 
-	tunnelCtx00, err := sshdb.New(mssql.Opener, exampleCfg00, remoteAddr00)
+	tunnelCtx, err := sshdb.New(mssql.TunnelDriver, exampleCfg, remoteAddr)
 	if err != nil {
 		log.Fatalf("newDriverContext00 failed: %v", err)
 	}
-	tunnelCtx01, err := sshdb.New(mssql.Opener, exampleCfg01, remoteAddr01)
-	if err != nil {
-		log.Fatalf("newDriverContext01 failed: %v", err)
-	}
 
-	dsn00 := fmt.Sprintf("uid=%s;password=%s;server=%s;database=%s;app name=MyAppName00", userName, password, "localhost", "work")
-	dsn01 := fmt.Sprintf("uid=%s;password=%s;server=%s;database=%s;app name=MyAppName01", userName, password, "localhost", "play")
+	dsn00 := fmt.Sprintf("uid=me;password=xpwd;server=%s;database=crm", dbServerAddr[0])
+	dsn01 := fmt.Sprintf("uid=me;password=ypwd;server=%s;database=web", dbServerAddr[1])
 
-	connector00, err := tunnelCtx00.OpenConnector(dsn00)
+	connector00, err := tunnelCtx.OpenConnector(dsn00)
 	if err != nil {
 		log.Fatalf("open connector failed %s - %v", dsn00, err)
 	}
-	connector01, err := tunnelCtx01.OpenConnector(dsn01)
+	connector01, err := tunnelCtx.OpenConnector(dsn01)
 	if err != nil {
 		log.Fatalf("open connector failed %s - %v", dsn01, err)
 	}
@@ -123,10 +112,10 @@ func ExampleNew_multiplehosts() {
 	defer db01.Close()
 	// ping tests connectivity
 	if err := db00.PingContext(ctx); err != nil {
-		log.Printf("%s ping failed: %v", remoteAddr00, err)
+		log.Printf("%s ping failed: %v", "db0.example.com", err)
 	}
 	if err := db01.PingContext(ctx); err != nil {
-		log.Printf("%s ping failed: %v", remoteAddr01, err)
+		log.Printf("%s ping failed: %v", "db1.example.com", err)
 	}
 }
 
@@ -160,7 +149,6 @@ wXxGJwJo8diI8o0ew25P+n3K26eVHKfSvwljLjdBS5GeFyJE35ul4QsO2w+t0cAjj/SQ==
 -----END OPENSSH PRIVATE KEY-----
 `
 
-// fa
 // serverPrivateKey is used to authenticate ssh clients.
 // This key was generated using the following command
 // ssh-keygen -f ~/sshdb_server_key -t ecdsa -b 521

@@ -18,8 +18,8 @@ import (
 	"github.com/jfcote87/sshdb"
 )
 
-// Opener used to register an ssh tunnel for postgres
-var Opener sshdb.ConnectorOpener = opener("postgres_pgxv4")
+// TunnelDriver allows pgxv4 connection via an sshdb tunnel.
+var TunnelDriver sshdb.Driver = tunnelDriver("pgxv4")
 
 var configFunc ConfigFunc
 var mConfigFunc sync.Mutex
@@ -43,8 +43,8 @@ func (c ConfigFunc) edit(cc *pgx.ConnConfig) error {
 	return c(cc)
 }
 
-// NewConnector returns a new database/sql/driver connector
-func (o opener) NewConnector(df sshdb.Dialer, dsn string) (driver.Connector, error) {
+// OpenConnector uses passed dialer to create a connection to the pgxv4 database defined by the dsn variable.
+func (tun tunnelDriver) OpenConnector(df sshdb.Dialer, dsn string) (driver.Connector, error) {
 	cfg, err := pgx.ParseConfig(dsn)
 	if err != nil {
 		return nil, err
@@ -64,8 +64,8 @@ func (o opener) NewConnector(df sshdb.Dialer, dsn string) (driver.Connector, err
 	return d.OpenConnector(configName)
 }
 
-type opener string
+type tunnelDriver string
 
-func (o opener) Name() string {
-	return string(o)
+func (tun tunnelDriver) Name() string {
+	return string(tun)
 }

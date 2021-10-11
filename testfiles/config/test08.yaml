@@ -1,0 +1,6 @@
+## test08
+- hostport: ssh.example.com:22
+  user_id: me
+  client_key_file: testfiles/test_pwd_key
+  dsn_list:
+    - valid_dsn_string

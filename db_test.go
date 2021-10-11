@@ -62,9 +62,9 @@ func (c *Connector) Driver() driver.Driver {
 }
 
 func (c *Conn) Ping(ctx context.Context) error {
-	deadlines, _ := ctx.Value("deadlines").(string)
+	deadlines, _ := ctx.Value(deadlineKey).(string)
 	if deadlines > "" {
-		testOpenerIgnoreDeadline = (deadlines == "ignore")
+		testDriverIgnoreDeadline = (deadlines == "ignore")
 		err00 := c.SetDeadline(time.Now())
 		err01 := c.SetReadDeadline(time.Now())
 		err02 := c.SetWriteDeadline(time.Now())
@@ -92,11 +92,11 @@ func (el errlist) Error() string {
 	return b.String()
 }
 
-// testOpener used to register an ssh tunnel for mssql
-var testOpener = opener("sshdbtest")
+// testDriver used to register an ssh tunnel for mssql
+var testDriver = tunDriver("sshdbtest")
 
-// NewConnector returns a new database/sql/driver connector
-func (o opener) NewConnector(dialer sshdb.Dialer, dsn string) (driver.Connector, error) {
+// New returns a new database/sql/driver connector
+func (tun tunDriver) OpenConnector(dialer sshdb.Dialer, dsn string) (driver.Connector, error) {
 	if strings.HasPrefix(dsn, "ERR") {
 		return nil, fmt.Errorf("invalid dsn %s", dsn)
 	}
@@ -108,14 +108,14 @@ func (o opener) NewConnector(dialer sshdb.Dialer, dsn string) (driver.Connector,
 	}, nil
 }
 
-var testOpenerIgnoreDeadline bool
+var testDriverIgnoreDeadline bool
 
-type opener string
+type tunDriver string
 
-func (o opener) IgnoreDeadlineError() bool {
-	return testOpenerIgnoreDeadline
+func (tun tunDriver) IgnoreDeadlineError() bool {
+	return testDriverIgnoreDeadline
 }
 
-func (o opener) Name() string {
-	return string(o)
+func (tun tunDriver) Name() string {
+	return string(tun)
 }

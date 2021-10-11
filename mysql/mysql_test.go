@@ -8,19 +8,21 @@ package mysql_test
 import (
 	"context"
 	"errors"
+	"io/ioutil"
 	"net"
+	"os"
 	"testing"
 
 	"github.com/jfcote87/sshdb"
+	"gopkg.in/yaml.v3"
 
-	"github.com/jfcote87/sshdb/internal"
 	"github.com/jfcote87/sshdb/mysql"
 )
 
-func TestOpener(t *testing.T) {
+func TestTunnelDriver(t *testing.T) {
 
-	if mysql.Opener.Name() != "mysql" {
-		t.Errorf("expected ConnectorOpener.Name() = \"mysql\"; got %s", mysql.Opener.Name())
+	if mysql.TunnelDriver.Name() != "mysql" {
+		t.Errorf("expected TunnelDriver.Name() = \"mysql\"; got %s", mysql.TunnelDriver.Name())
 	}
 
 	ctx, cancelfunc := context.WithCancel(context.Background())
@@ -32,14 +34,14 @@ func TestOpener(t *testing.T) {
 		return nil, errors.New("no connect")
 	})
 
-	connectorFail, err := mysql.Opener.NewConnector(dialer, "sa:passwordzzz(localhost:3306)schema")
+	connectorFail, err := mysql.TunnelDriver.OpenConnector(dialer, "sa:passwordzzz(localhost:3306)schema")
 	if err == nil {
 		t.Errorf("connectorfail expected dsn error ; got %v", err)
 		return
 	}
 	_ = connectorFail
 
-	connector, err := mysql.Opener.NewConnector(dialer, "sa:password@tcp(localhost:3306)/schema")
+	connector, err := mysql.TunnelDriver.OpenConnector(dialer, "sa:password@tcp(localhost:3306)/schema")
 	if err != nil {
 		t.Errorf("open connector failed %v", err)
 		return
@@ -54,17 +56,33 @@ func TestOpener(t *testing.T) {
 
 }
 
-func TestOpener_live(t *testing.T) {
-	db, err := internal.DBFromEnvSettings(mysql.Opener)
-	if err != nil {
-		if err == internal.ErrNoEnvVariable {
-			t.Skip("test connection skipped, SSHDB_CLIENT_CONNECTION_MYSQL not found")
-			return
-		}
-		t.Errorf("%v", err)
+const testEnvName = "SSHDB_CONFIG_YAML_TEST_MYSQL"
+
+func TestDriver_live(t *testing.T) {
+	fn, ok := os.LookupEnv(testEnvName)
+	if !ok {
+		t.Skipf("test connection skipped, %s not found", testEnvName)
 		return
 	}
-	if err = db.Ping(); err != nil {
-		t.Errorf("ping failure %v", err)
+	buff, err := ioutil.ReadFile(fn)
+	if err != nil {
+		t.Errorf("unable to open %s %v", fn, err)
+		return
+	}
+	var cfg sshdb.Config
+	if err := yaml.Unmarshal(buff, &cfg); err != nil {
+		t.Errorf("%s unmarshal yaml %v", fn, err)
+		return
+	}
+	dbids := cfg.DBList()
+	dbs, err := cfg.OpenDBs(mysql.TunnelDriver)
+	if err != nil {
+		t.Errorf("opendbs failed: %v", err)
+		return
+	}
+	for i := range dbs {
+		if err := dbs[i].Ping(); err != nil {
+			t.Errorf("%s - %v", dbids[i], err)
+		}
 	}
 }

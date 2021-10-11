@@ -11,18 +11,20 @@ package pgxv4_test
 import (
 	"context"
 	"errors"
+	"io/ioutil"
 	"net"
+	"os"
 	"testing"
 
 	"github.com/jackc/pgx/v4"
 	"github.com/jfcote87/sshdb"
-	"github.com/jfcote87/sshdb/internal"
 	"github.com/jfcote87/sshdb/pgxv4"
+	"gopkg.in/yaml.v3"
 )
 
-func TestOpener(t *testing.T) {
-	if pgxv4.Opener.Name() != "postgres_pgxv4" {
-		t.Errorf("expected ConnectorCreator.Name() = \"postgres_pgxv4\"; got %s", pgxv4.Opener.Name())
+func TestTunnelDriver(t *testing.T) {
+	if pgxv4.TunnelDriver.Name() != "pgxv4" {
+		t.Errorf("expected TunnelDriver.Name() = \"pgxv4\"; got %s", pgxv4.TunnelDriver.Name())
 	}
 	ctx, cancelfunc := context.WithCancel(context.Background())
 	defer cancelfunc()
@@ -31,13 +33,13 @@ func TestOpener(t *testing.T) {
 		cancelfunc()
 		return nil, errors.New("no connect")
 	})
-	connectorFail, err := pgxv4.Opener.NewConnector(dialer, "applic2.3.4 dbname=mydb")
+	connectorFail, err := pgxv4.TunnelDriver.OpenConnector(dialer, "applic2.3.4 dbname=mydb")
 	if err != nil {
 		t.Errorf("connectorfail expected \"unexpected character error\"; got %v", err)
 		return
 	}
 	_ = connectorFail
-	connector, err := pgxv4.Opener.NewConnector(dialer, "postgres://jack:secret@10.52.32.93:5432/mydb?sslmode=verify-ca")
+	connector, err := pgxv4.TunnelDriver.OpenConnector(dialer, "postgres://jack:secret@10.52.32.93:5432/mydb?sslmode=verify-ca")
 	if err != nil {
 		t.Errorf("open connector failed %v", err)
 		return
@@ -67,33 +69,49 @@ func TestConfigFunc(t *testing.T) {
 		}
 		return errors.New("failure")
 	})
-	_, err := pgxv4.Opener.NewConnector(dialer, dsn00)
+	_, err := pgxv4.TunnelDriver.OpenConnector(dialer, dsn00)
 	if err != nil {
 		t.Errorf("dsn00 expected successful open; got %v", err)
 		return
 	}
 
-	if _, err = pgxv4.Opener.NewConnector(dialer, dsn01); err == nil {
+	if _, err = pgxv4.TunnelDriver.OpenConnector(dialer, dsn01); err == nil {
 		t.Errorf("dsn01 expected newconnector error; got <nil>")
 
 	}
-	if _, err := pgxv4.Opener.NewConnector(dialer, dsn02); err == nil {
+	if _, err := pgxv4.TunnelDriver.OpenConnector(dialer, dsn02); err == nil {
 		t.Errorf("dsn02 expected newconnector error; got <nil>")
 	}
 	pgxv4.SetConfigEdit(nil)
 }
 
-func TestOpener_live(t *testing.T) {
-	db, err := internal.DBFromEnvSettings(pgxv4.Opener)
-	if err != nil {
-		if err == internal.ErrNoEnvVariable {
-			t.Skip("test connection skipped, SSHDB_CLIENT_CONNECTION_POSTGRES_PGXV4 not found")
-			return
-		}
-		t.Errorf("%v", err)
+const testEnvName = "SSHDB_CONFIG_YAML_TEST_PGXV4"
+
+func TestDriver_live(t *testing.T) {
+	fn, ok := os.LookupEnv(testEnvName)
+	if !ok {
+		t.Skipf("test connection skipped, %s not found", testEnvName)
 		return
 	}
-	if err = db.Ping(); err != nil {
-		t.Errorf("ping failure %v", err)
+	buff, err := ioutil.ReadFile(fn)
+	if err != nil {
+		t.Errorf("unable to open %s %v", fn, err)
+		return
+	}
+	var cfg sshdb.Config
+	if err := yaml.Unmarshal(buff, &cfg); err != nil {
+		t.Errorf("%s unmarshal yaml %v", fn, err)
+		return
+	}
+	dbids := cfg.DBList()
+	dbs, err := cfg.OpenDBs(pgxv4.TunnelDriver)
+	if err != nil {
+		t.Errorf("opendbs failed: %v", err)
+		return
+	}
+	for i := range dbs {
+		if err := dbs[i].Ping(); err != nil {
+			t.Errorf("%s - %v", dbids[i], err)
+		}
 	}
 }

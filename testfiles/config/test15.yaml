@@ -1,0 +1,6 @@
+## test15
+- hostport: ssh .example.com
+  user_id: me
+  pwd: good_password
+  dsn_list:
+    - valid_dsn_string

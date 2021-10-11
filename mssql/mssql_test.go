@@ -9,18 +9,20 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"io/ioutil"
 	"net"
+	"os"
 	"testing"
 
 	pgkmssql "github.com/denisenkom/go-mssqldb"
 	"github.com/jfcote87/sshdb"
-	"github.com/jfcote87/sshdb/internal"
 	"github.com/jfcote87/sshdb/mssql"
+	"gopkg.in/yaml.v3"
 )
 
-func TestOpener(t *testing.T) {
-	if mssql.Opener.Name() != "mssql" {
-		t.Errorf("expected ConnectorCreator.Name() = \"mssql\"; got %s", mssql.Opener.Name())
+func TestTunnelDriver(t *testing.T) {
+	if mssql.TunnelDriver.Name() != "mssql" {
+		t.Errorf("expected Tunneler.Name() = \"mssql\"; got %s", mssql.TunnelDriver.Name())
 	}
 	ctx, cancelfunc := context.WithCancel(context.Background())
 	defer cancelfunc()
@@ -30,14 +32,14 @@ func TestOpener(t *testing.T) {
 		return nil, errors.New("no connect")
 	})
 
-	connectorFail, err := mssql.Opener.NewConnector(dialer, "odbc:=====")
+	connectorFail, err := mssql.TunnelDriver.OpenConnector(dialer, "odbc:=====")
 	if err == nil {
 		t.Errorf("connectorfail expected \"unexpected character error\"; got %v", err)
 		return
 	}
 	_ = connectorFail
 
-	connector, err := mssql.Opener.NewConnector(dialer, "sqlserver://sa:mypass@localhost?database=master&connection+timeout=30")
+	connector, err := mssql.TunnelDriver.OpenConnector(dialer, "sqlserver://sa:mypass@localhost?database=master&connection+timeout=30")
 	if err != nil {
 		t.Errorf("open connector failed %v", err)
 		return
@@ -62,14 +64,14 @@ func TestSetSessionInitSQL(t *testing.T) {
 	mssql.SetSessionInitSQL(dsn00, "")
 	mssql.SetSessionInitSQL(dsn01, "INIT")
 
-	var connectors = make([]driver.Connector, 2, 2)
+	var connectors = make([]driver.Connector, 2)
 	var err error
-	connectors[0], err = mssql.Opener.NewConnector(dialer, dsn00)
+	connectors[0], err = mssql.TunnelDriver.OpenConnector(dialer, dsn00)
 	if err != nil {
 		t.Errorf("open connector failed %v", err)
 		return
 	}
-	connectors[1], err = mssql.Opener.NewConnector(dialer, dsn01)
+	connectors[1], err = mssql.TunnelDriver.OpenConnector(dialer, dsn01)
 	if err != nil {
 		t.Errorf("open connector failed %v", err)
 		return
@@ -88,17 +90,33 @@ func TestSetSessionInitSQL(t *testing.T) {
 
 }
 
-func TestOpener_live(t *testing.T) {
-	db, err := internal.DBFromEnvSettings(mssql.Opener)
-	if err != nil {
-		if err == internal.ErrNoEnvVariable {
-			t.Skip("test connection skipped, SSHDB_CLIENT_CONNECTION_MSSQL not found")
-			return
-		}
-		t.Errorf("%v", err)
+const testEnvName = "SSHDB_CONFIG_YAML_TEST_MSSQL"
+
+func TestDriver_live(t *testing.T) {
+	fn, ok := os.LookupEnv(testEnvName)
+	if !ok {
+		t.Skipf("test connection skipped, %s not found", testEnvName)
 		return
 	}
-	if err = db.Ping(); err != nil {
-		t.Errorf("ping failure %v", err)
+	buff, err := ioutil.ReadFile(fn)
+	if err != nil {
+		t.Errorf("unable to open %s %v", fn, err)
+		return
+	}
+	var cfg sshdb.Config
+	if err := yaml.Unmarshal(buff, &cfg); err != nil {
+		t.Errorf("%s unmarshal yaml %v", fn, err)
+		return
+	}
+	dbids := cfg.DBList()
+	dbs, err := cfg.OpenDBs(mssql.TunnelDriver)
+	if err != nil {
+		t.Errorf("opendbs failed: %v", err)
+		return
+	}
+	for i := range dbs {
+		if err := dbs[i].Ping(); err != nil {
+			t.Errorf("%s - %v", dbids[i], err)
+		}
 	}
 }

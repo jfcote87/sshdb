@@ -1,0 +1,12 @@
+## test18
+- hostport: ssh2.example.com:22
+  user_id: me
+  pwd: good_password
+  dsn_list:
+    - valid_dsn_string
+- hostport: ssh.example.com:22
+  user_id: me
+  pwd: good_password
+  dsn_list:
+    - valid_dsn_string2
+    - valid_dsn_string3

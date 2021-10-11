@@ -14,7 +14,9 @@ import (
 	"time"
 )
 
-func TestDialContext_Context(t *testing.T) {
+// TestDialContext checks that tun.DialContext handles context
+// cancellation
+func TestDialContext(t *testing.T) {
 	tun := tunnel{}
 	ctx, cancelfunc := context.WithCancel(context.Background())
 	cancelfunc()
