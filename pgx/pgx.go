@@ -21,7 +21,7 @@ import (
 var configFunc ConfigFunc
 var mConfigFunc sync.Mutex
 
-// TunnelDriver allows pgx connection via an sshdb tunnel.
+// TunnelDriver is used to register the postgres sql driver pgx version3
 var TunnelDriver sshdb.Driver = tunnelDriver("pgx")
 
 // ConfigFunc updates fields in a ConnConfig after
@@ -43,7 +43,7 @@ func (c ConfigFunc) edit(cc *pgx.ConnConfig) error {
 	return c(cc)
 }
 
-// OpenConnector uses passed dialer to create a connection to the mssql database defined by the dsn variable.
+// OpenConnector returns a connector based upon the DialFunc
 func (tun tunnelDriver) OpenConnector(df sshdb.Dialer, dsn string) (driver.Connector, error) {
 
 	cfg, err := pgx.ParseConnectionString(dsn)

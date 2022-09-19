@@ -12,9 +12,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"strings"
-
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"github.com/jfcote87/sshdb"
@@ -24,7 +22,7 @@ import (
 var unixSocket string
 
 type testTunnelConfig struct {
-	tun          sshdb.Tunnel
+	tun          *sshdb.Tunnel
 	cancel       func()
 	remoteDbAddr []string
 	connectors   []driver.Connector
@@ -37,75 +35,6 @@ type connTests struct {
 	expectedCnt   int
 	hasErr        bool
 	hasConnectErr bool
-}
-
-func (cfg *testTunnelConfig) testConnectPing(t *testing.T) {
-	cfg.hasErr = true
-	tunnel := cfg.tun
-	connectTests := cfg.connectTests
-
-	testLen := len(connectTests)
-	var db = make([]*sql.DB, testLen)
-	defer closeDBs(db)
-
-	var wg sync.WaitGroup // used for concurrent ping calls
-	var pingFuncs []func()
-	var totalConnections int64
-
-	cfg.connectors = make([]driver.Connector, testLen)
-	for i, connTest := range connectTests {
-		connector, err := tunnel.OpenConnector(connTest.dsn)
-		if err != nil {
-			if !connTest.hasErr {
-				t.Errorf("unable to open to connector[%d] db %v", i, err)
-			}
-			continue
-		}
-		if connTest.hasErr {
-			t.Errorf("expected error on connector open[%d] db", i)
-			continue
-		}
-
-		cfg.connectors[i] = connector
-		db[i] = sql.OpenDB(connector)
-		idx := i
-		hasConnErr := connTest.hasConnectErr
-		// have a good connector so run pings concurrently
-		pingFuncs = append(pingFuncs, func() {
-			defer wg.Done()
-			if err := db[idx].PingContext(context.Background()); err != nil {
-				if !hasConnErr {
-					t.Errorf("unable to ping connTest[%d] db %v", idx, err)
-				}
-				return
-			}
-			atomic.AddInt64(&totalConnections, 1)
-		})
-
-	}
-	wg.Add(len(pingFuncs))
-	for _, f := range pingFuncs {
-		go f()
-	}
-	wg.Wait()
-	dialerCnt, err := sshdb.ConnectionCount(tunnel)
-	if err != nil {
-		t.Errorf("dialercount returned error %v", err)
-		return
-	}
-	if dialerCnt != int(totalConnections) {
-		t.Errorf("expected dialer count of %d; got %d", totalConnections, dialerCnt)
-	}
-	if err := tunnel.Close(); err != nil {
-		t.Errorf("expect no errors with reset; got %v", err)
-		return
-	}
-	cnt, err := sshdb.ConnectionCount(tunnel)
-	if cnt != 0 || err != nil {
-		t.Errorf("expected no connections; dialer count is %d %v", cnt, err)
-		return
-	}
-	cfg.hasErr = false
 }
 
 func TestTunnel(t *testing.T) {
@@ -135,12 +64,14 @@ func TestTunnel(t *testing.T) {
 		return
 	}
 	defer srvCloseFunc()
-	tunnel, err := sshdb.New(testDriver, ds.clientConfig(), ds.addr)
+	tunnel, err := sshdb.New(ds.clientConfig(), ds.addr) // testDriver, ds.clientConfig(), ds.addr)
 	if err != nil {
 		t.Errorf("registration for %s failed %v", ds.addr, err)
 		return
 	}
-	defer tunnel.Close()
+	defer func() {
+		tunnel.Close()
+	}()
 	cfg := &testTunnelConfig{
 		tun:          tunnel,
 		cancel:       srvCloseFunc,
@@ -171,6 +102,91 @@ func TestTunnel(t *testing.T) {
 	}
 }
 
+func (cfg *testTunnelConfig) testConnectPing(t *testing.T) {
+	cfg.hasErr = true
+	tunnel := cfg.tun
+	connectTests := cfg.connectTests
+	testLen := len(connectTests)
+	ptp := &pingTestParams{
+		cfg: cfg,
+		dbs: make([]*sql.DB, len(connectTests)),
+	}
+	defer closeDBs(ptp.dbs)
+
+	cfg.connectors = make([]driver.Connector, testLen)
+
+	ptp.funcs(t)
+	ptp.wg.Add(len(ptp.pingFuncs))
+	for _, f := range ptp.pingFuncs {
+		go f()
+	}
+	ptp.wg.Wait()
+	dialerCnt, err := sshdb.ConnectionCount(tunnel)
+	if err != nil {
+		t.Errorf("dialercount returned error %v", err)
+		return
+	}
+	if dialerCnt != ptp.totalConnections {
+		t.Errorf("expected dialer count of %d; got %d", ptp.totalConnections, dialerCnt)
+	}
+	if err := tunnel.Close(); err != nil {
+		t.Errorf("expect no errors with reset; got %v", err)
+		return
+	}
+	cnt, err := sshdb.ConnectionCount(tunnel)
+	if cnt != 0 || err != nil {
+		t.Errorf("expected no connections; dialer count is %d %v", cnt, err)
+		return
+	}
+	cfg.hasErr = false
+}
+
+type pingTestParams struct {
+	cfg              *testTunnelConfig
+	dbs              []*sql.DB
+	totalConnections int
+	pingFuncs        []func()
+	wg               sync.WaitGroup
+}
+
+func (ptp *pingTestParams) funcs(t *testing.T) {
+	var mTotalConnections sync.Mutex
+	for i, connTest := range ptp.cfg.connectTests {
+		connector, err := ptp.cfg.tun.OpenConnector(testDriver, connTest.dsn)
+		if err != nil {
+			if !connTest.hasErr {
+				t.Errorf("unable to open to connector[%d] db %v", i, err)
+			}
+			continue
+		}
+		if connTest.hasErr {
+			t.Errorf("expected error on connector open[%d] db", i)
+			continue
+		}
+		idx := i
+		ptp.cfg.connectors[idx] = connector
+		ptp.dbs[idx] = sql.OpenDB(connector)
+
+		hasConnErr := connTest.hasConnectErr
+		// have a good connector so run pings concurrently
+		ptp.pingFuncs = append(ptp.pingFuncs, func() {
+			defer ptp.wg.Done()
+			if connTest.hasConnectErr {
+				t.Errorf("Has connecterror")
+			}
+			if err := ptp.dbs[idx].PingContext(context.Background()); err != nil {
+				if !hasConnErr {
+					t.Errorf("unable to ping connTest[%d] db %v", idx, err)
+				}
+				return
+			}
+			mTotalConnections.Lock()
+			ptp.totalConnections++
+			mTotalConnections.Unlock()
+		})
+	}
+}
+
 func (cfg *testTunnelConfig) testOpenDB(t *testing.T) {
 	cfg.hasErr = true
 	dbx0 := sql.OpenDB(cfg.connectors[0])
@@ -179,8 +195,8 @@ func (cfg *testTunnelConfig) testOpenDB(t *testing.T) {
 		t.Errorf("unable to ping dbx0 after reset %v", err)
 		return
 	}
-	if cnt, err := sshdb.ConnectionCount(cfg.tun); cnt != 1 || err != nil {
-		t.Errorf("expected 1 connections; dialer count is %d - error %v", cnt, err)
+	if err := connectionCountTest(cfg.tun, 1); err != nil {
+		t.Errorf("%v", err)
 	}
 	dbx1 := sql.OpenDB(cfg.connectors[len(cfg.connectTests)-1])
 	defer dbx1.Close()
@@ -188,19 +204,30 @@ func (cfg *testTunnelConfig) testOpenDB(t *testing.T) {
 		t.Errorf("unable to ping db01 after reset %v", err)
 		return
 	}
-	if cnt, err := sshdb.ConnectionCount(cfg.tun); cnt != 2 || err != nil {
-		t.Errorf("expected 2 connections; dialer count is %d - error %v", cnt, err)
+	if err := connectionCountTest(cfg.tun, 2); err != nil {
+		t.Errorf("%v", err)
 	}
 	dbx0.Close()
-	if cnt, err := sshdb.ConnectionCount(cfg.tun); cnt != 1 || err != nil {
-		t.Errorf("expected 1 connections; dialer count is %d - error %v", cnt, err)
+	if err := connectionCountTest(cfg.tun, 1); err != nil {
+		t.Errorf("%v", err)
 	}
 	dbx1.Close()
-	if cnt, err := sshdb.ConnectionCount(cfg.tun); cnt != 0 || err != nil {
-		t.Errorf("expected 0 connections; dialer count is %d - error %v", cnt, err)
+	if err := connectionCountTest(cfg.tun, 0); err != nil {
+		t.Errorf("%v", err)
 		return
 	}
 	cfg.hasErr = false
+}
+
+func connectionCountTest(tun *sshdb.Tunnel, expectedCnt int) error {
+	cnt, err := sshdb.ConnectionCount(tun)
+	if err != nil {
+		return fmt.Errorf("expected %d connection; got error %v", expectedCnt, err)
+	}
+	if cnt != expectedCnt {
+		return fmt.Errorf("expected %d connections; dialer count is %d", expectedCnt, cnt)
+	}
+	return nil
 }
 
 func (cfg *testTunnelConfig) testOpen(t *testing.T) {
@@ -287,7 +314,7 @@ func TestTunnel_Fail(t *testing.T) {
 		srvcfg: getPasswordServerCfg(matchFunc),
 	}
 
-	tunnel, err := sshdb.New(testDriver, ds.clientConfig(), ds.addr)
+	tunnel, err := sshdb.New(ds.clientConfig(), ds.addr)
 	if err != nil {
 		t.Errorf("registration for %s failed %v", ds.addr, err)
 		return
@@ -300,7 +327,7 @@ func TestTunnel_Fail(t *testing.T) {
 	}
 	defer srvCloseFunc()
 
-	connector00, err := tunnel.OpenConnector(remoteDbAddr[0])
+	connector00, err := tunnel.OpenConnector(testDriver, remoteDbAddr[0])
 	if err != nil {
 		t.Errorf("unable to open connector00 %v", err)
 		return
@@ -313,7 +340,7 @@ func TestTunnel_Fail(t *testing.T) {
 	}
 	testPass = password
 
-	connector01, err := tunnel.OpenConnector(remoteDbAddr[0])
+	connector01, err := tunnel.OpenConnector(testDriver, remoteDbAddr[0])
 	if err != nil {
 		t.Errorf("unable to open connector00 %v", err)
 		return
@@ -321,7 +348,7 @@ func TestTunnel_Fail(t *testing.T) {
 
 	db01 := sql.OpenDB(connector01)
 	err = db01.PingContext(ctx)
-	if err == nil || err.Error() != "context canceled" {
+	if err != context.Canceled {
 		t.Errorf("expected context canceled; got %v", err)
 	}
 	db01.Close()
@@ -354,7 +381,7 @@ func TestDeadlines(t *testing.T) {
 		srvcfg: getPasswordServerCfg(matchFunc),
 	}
 
-	tunnel, err := sshdb.New(testDriver, ds.clientConfig(), ds.addr)
+	tunnel, err := sshdb.New(ds.clientConfig(), ds.addr)
 	if err != nil {
 		t.Errorf("registration for %s failed %v", ds.addr, err)
 		return
@@ -367,39 +394,57 @@ func TestDeadlines(t *testing.T) {
 	}
 	defer srvCloseFunc()
 
-	connector00, err := tunnel.OpenConnector(remoteDbAddr[0])
+	connector00, err := tunnel.OpenConnector(testDriver, remoteDbAddr[0])
 	if err != nil {
 		t.Errorf("unable to open connector00 %v", err)
 		return
 	}
 	db00 := sql.OpenDB(connector00)
 	defer db00.Close()
+	ctx = context.WithValue(ctx, deadlineKey, func() {
+		tunnel.IgnoreSetDeadlineRequest(true)
+	})
+	for _, errs := range checkDeadlines(ctx, db00, true) {
+		if errs != nil {
+			t.Errorf("%v", errs)
+		}
+	}
+	ctx = context.WithValue(ctx, deadlineKey, func() {
+		tunnel.IgnoreSetDeadlineRequest(false)
+	})
+	for _, errs := range checkDeadlines(ctx, db00, false) {
+		if errs != nil {
+			t.Errorf("%v", errs)
+		}
+	}
+}
+
+func checkDeadlines(ctx context.Context, db00 *sql.DB, ignore bool) errlist {
 	var deadlineType = []string{"deadline", "readdeadline", "writedeadline"}
-	ctx = context.WithValue(ctx, deadlineKey, "ignore")
-	err = db00.PingContext(ctx)
+
+	err := db00.PingContext(ctx)
+	var retlist = make(errlist, len(deadlineType))
+
 	elx, ok := err.(errlist)
 	if !ok {
-		t.Errorf("expected errlist; got %#v", err)
-		return
+		retlist[0] = fmt.Errorf("expected errlist; got %#v", err)
+		return retlist
+	}
+	if len(elx) != 3 {
+		retlist[0] = fmt.Errorf("expected errlist with len 3; got %d", len(elx))
 	}
 	for i, err := range elx {
-		if err != nil {
-			t.Errorf("expected %s to return nil; got %v", deadlineType[i], err)
+		if ignore {
+			if err != nil {
+				retlist[i] = fmt.Errorf("expected %s to return nil; got %v", deadlineType[i], err)
+			}
+			continue
 		}
-	}
-	ctx = context.WithValue(ctx, deadlineKey, "default")
-	err = db00.PingContext(ctx)
-	elx, ok = err.(errlist)
-	if !ok {
-		t.Errorf("expected errlist; got %#v", err)
-		return
-	}
-	for i, err := range elx {
 		if err == nil || err.Error() != "ssh: tcpChan: deadline not supported" {
-			t.Errorf("expected %s to return ssh: tcpChan: deadline not supported; got %v", deadlineType[i], err)
+			retlist[i] = fmt.Errorf("expected %s to return ssh: tcpChan: deadline not supported; got %v", deadlineType[i], err)
 		}
 	}
-
+	return retlist
 }
 
 func TestNewTunnel(t *testing.T) {
@@ -418,17 +463,13 @@ func TestNewTunnel(t *testing.T) {
 		{name: "err00", args: args{cc: testDriver, addr: "localhost:22"}, errString: "clientConfig may not be nil"},
 		{name: "err01", args: args{cc: testDriver, cfg: &cfg}, errString: "remoteAddr may not be empty"},
 		{name: "err02", args: args{cc: testDriver, addr: "ssh.example.com", cfg: &cfg}, errString: "invalid address"},
-		{name: "err03", args: args{addr: "localhost:22", cfg: &cfg}, errString: "tunnelDriver may not be nil"},
 		{name: "ok", args: args{cc: testDriver, addr: "work:22", cfg: &cfg}, errString: ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tunnel, err := sshdb.New(tt.args.cc, tt.args.cfg, tt.args.addr)
-			if err == nil && tt.errString == "" {
-
-				if getName(tunnel) != testDriver.Name() {
-					t.Errorf("expected dbname = %s; got %s", testDriver.Name(), getName(tunnel))
-				}
+			tunnel, err := sshdb.New(tt.args.cfg, tt.args.addr)
+			if tt.errString == "" && err == nil {
+				tunnel.Close()
 				return
 			}
 			if err == nil || !strings.HasPrefix(err.Error(), tt.errString) {
@@ -436,17 +477,6 @@ func TestNewTunnel(t *testing.T) {
 			}
 		})
 	}
-}
-
-type DBNamer interface {
-	DBName() string
-}
-
-func getName(tunnel sshdb.Tunnel) string {
-	if nm, ok := tunnel.(DBNamer); ok {
-		return nm.DBName()
-	}
-	return ""
 }
 
 func getPublicKeyServerCfg(userID string, key ssh.PublicKey) *ssh.ServerConfig {

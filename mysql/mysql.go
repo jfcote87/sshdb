@@ -18,10 +18,18 @@ import (
 	"github.com/jfcote87/sshdb"
 )
 
-// TunnelDriver allows mysql connection via an sshdb tunnel.
-var TunnelDriver sshdb.Driver = tunnelDriver("mysql")
+func init() {
+	// register name with sshdb
+	sshdb.RegisterDriver(driverName, TunnelDriver)
+}
 
-// OpenConnector uses passed dialer to create a connection to the mssql database defined by the dsn variable.
+const driverName = "mysql"
+
+// TunnelDriver creates mysql connectors via that connect via sshdb tunnels
+var TunnelDriver sshdb.Driver = tunnelDriver(driverName)
+
+// OpenConnector returns a new mssql connector that uses the dialer to open ssh channel connections
+// as the underlying network connections
 func (tun tunnelDriver) OpenConnector(dialer sshdb.Dialer, dsn string) (driver.Connector, error) {
 	cfg, err := mysql.ParseDSN(dsn)
 	if err != nil {

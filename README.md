@@ -18,27 +18,33 @@ go get -v github.com/jfcote87
 
 ## making connections
 
-Initialize a Config directly or via yaml or json formats.  Config contains 1 to many
-TunnelConfigs which contain one to many connections (dsn strings).  Example of yaml
-definitions may be found in ExampleConfig func and in the testfiles/config directory.
+Initialize a TunnelConfig directly or via yaml or json formats.  
+A TunnelConfig defines the ssh tunnel as well as one to multiple
+database connections (dsn strings).  Example of yaml definitions
+may be found in ExampleConfig func and in the testfiles/config directory.
 
-	var config sshdb.Config
+	var config sshdb.TunnelConfig
 	if err := yaml.Unmarshal([]byte(cfg_yaml), &config); err != nil {
 		log.Fatalf("yaml decode failed: %v", err)
 	}
-	dbs, err := config.OpenDBs(mysql.TunnelDriver)
+	dbs, err := config.DatabaseMap()
 	if err != nil {
 		log.Fatalf("opendbs fail: %v", err)
 	}
-	dbs[0].Ping()
+	dbs["remoteDB"].Ping()
 
 
 Otherwise create a tunnel directly and open connectors as needed.  This method
-makes the most sense if TunnelConfig does not have enough parameters for
-the case's ssh config.
+makes the most sense if TunnelConfig does not have sufficient ssh parameters to 
+define the tunnel.
 
+	exampleCfg := &ssh.ClientConfig{
+		User:            "jfcote87",
+		Auth:            []ssh.AuthMethod{ssh.Password("my second favorite password")},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+	}
 	// New creates a "tunnel" for database connections.
-	tunnel, err := sshdb.New(mysql.TunnelDriver, exampleCfg, remoteAddr)
+	tunnel, err := sshdb.New(exampleCfg, remoteAddr)
 	if err != nil {
 		log.Fatalf("new tunnel create failed: %v", err)
 	}
@@ -46,7 +52,7 @@ the case's ssh config.
 	dsn := "username:dbpassword@tcp(serverAddress:3306)/schemaName?parseTime=true"
 
 	// open connector and then new DB
-	connector, err := tunnel.OpenConnector(dsn)
+	connector, err := tunnel.OpenConnector(mysql.TunnelDriver, dsn)
 	if err != nil {
 		return fmt.Errorf("open connector failed %s - %v", dsn, err)
 	}

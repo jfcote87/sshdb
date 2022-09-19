@@ -1,0 +1,15 @@
+test19 bad format
+hostport: ssh2.example.com:22
+user_id: me
+pwd: good_password
+datasources:
+  valid00: 
+    driver_name: test_driver
+    dsn: valid_dsn_string
+  valid01: 
+    driver_name: test_driver
+    dsn: valid_dsn_string2
+  valid02: 
+    driver_name: test_driver
+    dsn: valid_dsn_string3
+  

@@ -1,12 +1,59 @@
 ## test17
-- hostport: ssh2.example.com:22
-  user_id: me
-  pwd: good_password
-  dsn_list:
-    - valid_dsn_string
-- hostport: ssh.example.com:22
-  user_id: me
-  pwd: good_password
-  dsn_list:
-    - valid_dsn_string2
-    - ERRbad dsn string
+hostport: ssh2.example.com:22
+user_id: me
+pwd: good_password
+datasources:
+  good:
+    driver_name: test_driver
+    dsn: good string
+  a00:
+    driver_name: test_driver
+    dsn: good string
+  a01:
+    driver_name: test_driver
+    dsn: good string
+  a02:
+    driver_name: test_driver
+    dsn: good string  
+  a03:
+    driver_name: test_driver
+    dsn: good string  
+  a04:
+    driver_name: test_driver
+    dsn: good string  
+  a05:
+    driver_name: test_driver
+    dsn: good string  
+  a06:
+    driver_name: test_driver
+    dsn: good string  
+  a07:
+    driver_name: test_driver
+    dsn: good string  
+  a08:
+    driver_name: test_driver
+    dsn: good string
+  a09:
+    driver_name: test_driver
+    dsn: good string  
+  a10:
+    driver_name: test_driver
+    dsn: good string  
+  a11:
+    driver_name: test_driver
+    dsn: good string  
+  a12:
+    driver_name: test_driver
+    dsn: good string  
+  a13:
+    driver_name: test_driver
+    dsn: good string  
+  a14:
+    driver_name: test_driver
+    dsn: good string  
+  a15:
+    driver_name: test_driver
+    dsn: good string  
+  bad: 
+    driver_name: test_driver
+    dsn: ERRdsn

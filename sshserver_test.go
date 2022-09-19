@@ -14,7 +14,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-/* RFC4254 7.2 */
+// RFC4254 7.2
 type directTCPPayload struct {
 	Addr       string // To connect to
 	Port       uint32
@@ -31,7 +31,7 @@ func (p directTCPPayload) dial() (net.Conn, error) {
 
 }
 
-/* https://github.com/openssh/openssh-portable/blob/724eb900ace30661d45db2ba01d0f924d95ecccb/PROTOCOL#L235 */
+// https://github.com/openssh/openssh-portable/blob/724eb900ace30661d45db2ba01d0f924d95ecccb/PROTOCOL#L235
 type directStreamPayload struct {
 	Socket      string
 	Reserved    string
@@ -121,13 +121,12 @@ func (d *directTCPServer) start() (func(), error) {
 				break
 			}
 			// Before use, a handshake must be performed on the incoming net.Conn.
-			sshConn, chans, reqs, err := ssh.NewServerConn(socketConn, config)
+			//sshConn
+			_, chans, reqs, err := ssh.NewServerConn(socketConn, config)
 			if err != nil {
 				continue
 			}
-			go func() {
-				sshConn.Wait()
-			}()
+
 			// Discard all global out-of-band Requests
 			go ssh.DiscardRequests(reqs)
 
@@ -165,17 +164,17 @@ func (d *directTCPServer) handleChannel(newChannel ssh.NewChannel) {
 	case "direct-streamlocal@openssh.com":
 		payload = &directStreamPayload{}
 	default:
-		newChannel.Reject(ssh.UnknownChannelType, fmt.Sprintf("unknown channel type: %s", chType))
+		_ = newChannel.Reject(ssh.UnknownChannelType, fmt.Sprintf("unknown channel type: %s", chType))
 		return
 	}
 	if err := ssh.Unmarshal(newChannel.ExtraData(), payload); err != nil {
-		newChannel.Reject(ssh.Prohibited, fmt.Sprintf("unmarshal payload error %v", err))
+		_ = newChannel.Reject(ssh.Prohibited, fmt.Sprintf("unmarshal payload error %v", err))
 		return
 	}
 
 	rconn, err := payload.dial()
 	if err != nil {
-		newChannel.Reject(ssh.ConnectionFailed, err.Error())
+		_ = newChannel.Reject(ssh.ConnectionFailed, err.Error())
 		return
 	}
 
@@ -186,20 +185,22 @@ func (d *directTCPServer) handleChannel(newChannel ssh.NewChannel) {
 	}
 	go ssh.DiscardRequests(requests)
 
+	d.wg.Add(1)
 	// Prepare teardown function
 	close := func() {
 		connection.Close()
 		rconn.Close()
+		d.wg.Done()
 	}
 
 	//pipe session between sockets
 	var once sync.Once
 	go func() {
-		io.Copy(connection, rconn)
+		_, _ = io.Copy(connection, rconn)
 		once.Do(close)
 	}()
 	go func() {
-		io.Copy(rconn, connection)
+		_, _ = io.Copy(rconn, connection)
 		once.Do(close)
 	}()
 

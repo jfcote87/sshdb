@@ -1,5 +1,7 @@
 ## test01
-- hostport:
-  user_id: me
-  dsn_list:
-    - valid_dsn_string
+hostport:
+user_id: me
+dsn_list:
+  testdb:
+    driver_name: test_driver
+    dsn: valid_dsn_string

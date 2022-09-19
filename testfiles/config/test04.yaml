@@ -1,6 +1,8 @@
 ## test04
-- hostport: ssh.example.com:22
-  user_id: me
-  pwd: bestpasswordever
-  dsn_list:
-    - valid_dsn_string
+hostport: ssh.example.com:22
+user_id: me
+pwd: bestpasswordever
+datasources:
+  valid: 
+    driver_name: test_driver
+    dsn: valid_dsn_string

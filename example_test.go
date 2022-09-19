@@ -38,25 +38,26 @@ func ExampleNew() {
 		HostKeyCallback: ssh.FixedHostKey(serverSigner.PublicKey()),
 	}
 	// New creates a "tunnel" for database connections.
-	tunnel, err := sshdb.New(mysql.TunnelDriver, exampleCfg, remoteAddr)
+	tunnel, err := sshdb.New(exampleCfg, remoteAddr)
 	if err != nil {
 		log.Fatalf("new tunnel create failed: %v", err)
 	}
 
-	for _, cfg := range []struct {
+	configs := []struct {
 		nettype      string
 		dbServerAddr string
 	}{
 		{"tcp", "local:3306"},          // local database on remote server tcp connection
 		{"unix", "/tmp/mysql.sock"},    // local database on remote server via unix socket
 		{"tcp", "db.example.com:3306"}, // connect to db.example.com db from remote server skirt around a firewall
-	} {
+	}
+	for _, cfg := range configs {
 
 		// dbServerAddr is a valid address for the db server beginning from the remote ssh server.
 		dsn := fmt.Sprintf("username:password@%s(%s)/schemaname?parseTime=true", cfg.nettype, cfg.dbServerAddr)
 
 		// open connector and then new DB
-		connector, err := tunnel.OpenConnector(dsn)
+		connector, err := tunnel.OpenConnector(mysql.TunnelDriver, dsn)
 		if err != nil {
 			log.Printf("open connector failed %s - %v", dsn, err)
 			continue
@@ -89,7 +90,7 @@ func ExampleNew_multipledbservers() {
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 
-	tunnelCtx, err := sshdb.New(mssql.TunnelDriver, exampleCfg, remoteAddr)
+	tunnelCtx, err := sshdb.New(exampleCfg, remoteAddr)
 	if err != nil {
 		log.Fatalf("newDriverContext00 failed: %v", err)
 	}
@@ -97,11 +98,11 @@ func ExampleNew_multipledbservers() {
 	dsn00 := fmt.Sprintf("uid=me;password=xpwd;server=%s;database=crm", dbServerAddr[0])
 	dsn01 := fmt.Sprintf("uid=me;password=ypwd;server=%s;database=web", dbServerAddr[1])
 
-	connector00, err := tunnelCtx.OpenConnector(dsn00)
+	connector00, err := tunnelCtx.OpenConnector(mssql.TunnelDriver, dsn00)
 	if err != nil {
 		log.Fatalf("open connector failed %s - %v", dsn00, err)
 	}
-	connector01, err := tunnelCtx.OpenConnector(dsn01)
+	connector01, err := tunnelCtx.OpenConnector(mssql.TunnelDriver, dsn01)
 	if err != nil {
 		log.Fatalf("open connector failed %s - %v", dsn01, err)
 	}

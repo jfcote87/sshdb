@@ -1,5 +1,7 @@
 ## test02
-- hostport: ssh.example.com:22
-  user_id:
-  dsn_list:
-    - valid_dsn_string
+hostport: ssh.example.com:22
+user_id:
+dsn_list:
+  db:
+    driver_name: test_driver
+    dsn: valid_dsn_string

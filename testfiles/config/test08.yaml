@@ -1,6 +1,8 @@
 ## test08
-- hostport: ssh.example.com:22
-  user_id: me
-  client_key_file: testfiles/test_pwd_key
-  dsn_list:
-    - valid_dsn_string
+hostport: ssh.example.com:22
+user_id: me
+client_key_file: testfiles/test_pwd_key
+datasources:
+  valid: 
+    driver_name: test_driver
+    dsn: valid_dsn_string

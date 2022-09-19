@@ -7,7 +7,6 @@ package sshdb
 
 import (
 	"context"
-	"database/sql/driver"
 	"errors"
 	"fmt"
 	"testing"
@@ -17,7 +16,7 @@ import (
 // TestDialContext checks that tun.DialContext handles context
 // cancellation
 func TestDialContext(t *testing.T) {
-	tun := tunnel{}
+	tun := Tunnel{}
 	ctx, cancelfunc := context.WithCancel(context.Background())
 	cancelfunc()
 	cx, err := tun.DialContext(ctx, "", "noaddr:3600")
@@ -33,10 +32,9 @@ type ConnectionCounter interface {
 	ConnCount() int
 }
 
-// ConnectionCount looks up a dialer created when then net name
-// was registered and returns the current forwarding connection
-// count. This is used only for testing.
-func ConnectionCount(driverCtx driver.DriverContext) (int, error) {
+// ConnectionCount returns the number of open connections
+// in a tunnel. This is used only for testing.
+func ConnectionCount(driverCtx interface{}) (int, error) {
 	tun, ok := driverCtx.(ConnectionCounter)
 	if ok {
 		return tun.ConnCount(), nil
@@ -47,10 +45,9 @@ func ConnectionCount(driverCtx driver.DriverContext) (int, error) {
 // CloseClient closes mimics a network error closing
 // the tunnel's client connection.  Tests that
 // tunnel is reset.
-func CloseClient(testTunnel Tunnel) error {
-	tun, ok := testTunnel.(*tunnel)
-	if !ok {
-		return errors.New("not a *tunnel")
+func CloseClient(tun *Tunnel) error {
+	if tun == nil {
+		return errors.New("nil *Tunnel")
 	}
 	tun.m.Lock()
 	ch := tun.resetChan

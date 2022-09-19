@@ -17,22 +17,34 @@ import (
 	"github.com/jfcote87/sshdb"
 )
 
-type Driver struct{}
+type Driver struct {
+	Connector driver.Connector
+}
 
 func (d *Driver) OpenConnector(dsn string) (driver.Connector, error) {
-	return nil, nil
+	if strings.HasPrefix(dsn, "bad") || strings.HasPrefix(dsn, "ERR") {
+		return nil, fmt.Errorf("%s", dsn)
+	}
+	return d.Connector, nil
 }
 
 func (d *Driver) Open(dsn string) (driver.Conn, error) {
-	cn, err := d.OpenConnector(dsn)
+	_, err := d.OpenConnector(dsn)
 	if err != nil {
 		return nil, err
 	}
-	return cn.Connect(context.Background())
+	return &Conn{}, nil
 }
 
 type Conn struct {
 	net.Conn
+}
+
+func (c *Conn) Close() error {
+	if c != nil && c.Conn != nil {
+		return c.Conn.Close()
+	}
+	return nil
 }
 
 func (c *Conn) Prepare(query string) (driver.Stmt, error) {
@@ -58,13 +70,15 @@ func (c *Connector) Connect(ctx context.Context) (driver.Conn, error) {
 }
 
 func (c *Connector) Driver() driver.Driver {
-	return c.driver
+	return &Driver{
+		Connector: c,
+	}
 }
 
 func (c *Conn) Ping(ctx context.Context) error {
-	deadlines, _ := ctx.Value(deadlineKey).(string)
-	if deadlines > "" {
-		testDriverIgnoreDeadline = (deadlines == "ignore")
+	deadlineFunc, _ := ctx.Value(deadlineKey).(func())
+	if deadlineFunc != nil {
+		deadlineFunc()
 		err00 := c.SetDeadline(time.Now())
 		err01 := c.SetReadDeadline(time.Now())
 		err02 := c.SetWriteDeadline(time.Now())
@@ -92,7 +106,7 @@ func (el errlist) Error() string {
 	return b.String()
 }
 
-// testDriver used to register an ssh tunnel for mssql
+// testDriver used to register an ssh tunnel
 var testDriver = tunDriver("sshdbtest")
 
 // New returns a new database/sql/driver connector
@@ -108,13 +122,7 @@ func (tun tunDriver) OpenConnector(dialer sshdb.Dialer, dsn string) (driver.Conn
 	}, nil
 }
 
-var testDriverIgnoreDeadline bool
-
 type tunDriver string
-
-func (tun tunDriver) IgnoreDeadlineError() bool {
-	return testDriverIgnoreDeadline
-}
 
 func (tun tunDriver) Name() string {
 	return string(tun)

@@ -7,17 +7,17 @@ package mssql_test
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"errors"
-	"io/ioutil"
 	"net"
 	"os"
 	"testing"
 
 	pgkmssql "github.com/denisenkom/go-mssqldb"
 	"github.com/jfcote87/sshdb"
+	"github.com/jfcote87/sshdb/internal"
 	"github.com/jfcote87/sshdb/mssql"
-	"gopkg.in/yaml.v3"
 )
 
 func TestTunnelDriver(t *testing.T) {
@@ -98,25 +98,38 @@ func TestDriver_live(t *testing.T) {
 		t.Skipf("test connection skipped, %s not found", testEnvName)
 		return
 	}
-	buff, err := ioutil.ReadFile(fn)
+	cfg, err := internal.LoadTunnelConfig(fn)
 	if err != nil {
-		t.Errorf("unable to open %s %v", fn, err)
+		t.Errorf("load: %v", err)
 		return
 	}
-	var cfg sshdb.Config
-	if err := yaml.Unmarshal(buff, &cfg); err != nil {
-		t.Errorf("%s unmarshal yaml %v", fn, err)
-		return
-	}
-	dbids := cfg.DBList()
-	dbs, err := cfg.OpenDBs(mssql.TunnelDriver)
+	dbs, err := cfg.DatabaseMap()
 	if err != nil {
-		t.Errorf("opendbs failed: %v", err)
+		t.Errorf("open databases failed: %v", err)
 		return
 	}
-	for i := range dbs {
-		if err := dbs[i].Ping(); err != nil {
-			t.Errorf("%s - %v", dbids[i], err)
+
+	for nm, db := range dbs {
+		defer db.Close()
+		if err := db.Ping(); err != nil {
+			t.Errorf("%s: ping %v", nm, err)
+		}
+		for _, qry := range cfg.Datasources[nm].Queries {
+			if err := liveDBQuery(db, qry); err != nil {
+				t.Errorf("%s: %s: %v", nm, qry, err)
+			}
 		}
 	}
+}
+
+func liveDBQuery(db *sql.DB, qry string) error {
+	rows, err := db.Query(qry)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+
+	}
+	return nil
 }

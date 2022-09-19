@@ -11,26 +11,25 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/jfcote87/sshdb"
 	"gopkg.in/yaml.v3"
 )
 
-func TestConfig(t *testing.T) {
+func TestTunnelConfig(t *testing.T) {
+	sshdb.RegisterDriver("test_driver", testDriver)
 	tests := []struct {
 		name         string
 		hasErr       bool
 		errIdx       int
 		tunnelDrvIdx int
-		errMsg       string
 		numDB        int
 	}{
-		{name: "fail00", hasErr: true, errMsg: "tunnel driver may not be nil", tunnelDrvIdx: 1},
+		{name: "fail00", hasErr: true, errIdx: 0},
 		{name: "fail01", hasErr: true, errIdx: 0},
 		{name: "fail02", hasErr: true, errIdx: 1},
-		{name: "fail03", hasErr: true, errMsg: "at least one dsn string must be specified"},
+		{name: "fail03", hasErr: true, errIdx: 20},
 		{name: "success04", numDB: 1},
 		{name: "fail05", hasErr: true, errIdx: 2},
 		{name: "fail06", hasErr: true, errIdx: 3},
@@ -43,26 +42,20 @@ func TestConfig(t *testing.T) {
 		{name: "fail13", hasErr: true, errIdx: 8},
 		{name: "success14", numDB: 1},
 		{name: "fail15", hasErr: true, errIdx: 9},
-		{name: "fail16", hasErr: true, errIdx: 10},
+		{name: "fail16", hasErr: true, errIdx: 12},
 		{name: "fail17", hasErr: true, errIdx: 10},
-		{name: "success18", numDB: 3},
+		{name: "fail18", hasErr: true, errIdx: 13},
+		{name: "success19", numDB: 3},
 	}
-	var drivers = []sshdb.Driver{testDriver, nil}
 	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fn := fmt.Sprintf("testfiles/config/test%02d.yaml", i)
-			cfg, err := getConfig(fn)
+			cfg, err := getTunnelConfig(fn)
 			if err != nil {
 				t.Errorf("config file load failed %s: %v", fn, err)
 				return
 			}
-			dbs, err := cfg.OpenDBs(drivers[tt.tunnelDrvIdx])
-			if tt.errMsg > "" {
-				if err == nil || !strings.HasPrefix(err.Error(), tt.errMsg) {
-					t.Errorf("%s expected err %s; got %v", tt.name, tt.errMsg, err)
-				}
-				return
-			}
+			dbs, err := cfg.DatabaseMap()
 			if tt.hasErr {
 				var ce *sshdb.ConfigError
 				if !errors.As(err, &ce) {
@@ -74,24 +67,23 @@ func TestConfig(t *testing.T) {
 				}
 				return
 			}
-			if !tt.hasErr && err != nil {
+			if err != nil {
 				t.Errorf("%s expected success; got %v", tt.name, err)
 			}
 			if len(dbs) != tt.numDB {
 				t.Errorf("%s expected %d dbs; got %d", tt.name, tt.numDB, len(dbs))
 			}
-
 		})
 	}
 }
 
-func getConfig(fn string) (sshdb.Config, error) {
+func getTunnelConfig(fn string) (*sshdb.TunnelConfig, error) {
 	f, err := os.Open(fn)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	var cfg sshdb.Config
+	var cfg *sshdb.TunnelConfig
 	switch fn[len(fn)-4:] {
 	case "yaml":
 		return cfg, yaml.NewDecoder(f).Decode(&cfg)
@@ -101,25 +93,25 @@ func getConfig(fn string) (sshdb.Config, error) {
 	return nil, fmt.Errorf("invalid type %s", fn[len(fn)-4:])
 }
 
-func TestConfig_DBList(t *testing.T) {
-	fn := "testfiles/config/test18.yaml"
-	config, err := getConfig(fn)
+func TestTunnelConfig_DBList(t *testing.T) {
+	fn := "testfiles/config/test19.yaml"
+	config, err := getTunnelConfig(fn)
 	if err != nil {
 		t.Errorf("config file load failed %s: %v", fn, err)
 		return
 	}
-	cfgtags := config.DBList()
-	tt := []string{
-		"ssh2.example.com:22: valid_dsn_string",
-		"ssh.example.com:22: valid_dsn_string2",
-		"ssh.example.com:22: valid_dsn_string3",
+	cfgtags := config.Datasources
+	tt := map[string]string{
+		"valid00": "valid_dsn_string",
+		"valid01": "valid_dsn_string2",
+		"valid02": "valid_dsn_string3",
 	}
 	if len(tt) != len(cfgtags) {
 		t.Errorf("expected %d recs; got %d", len(tt), len(cfgtags))
 	}
-	for i := range tt {
-		if !strings.HasPrefix(cfgtags[i], tt[i]) {
-			t.Errorf("expectd err start of %s; got %s", tt[i], cfgtags[i])
+	for k, v := range tt {
+		if v != cfgtags[k].ConnectionString {
+			t.Errorf("expected %s with name %s; got %s", v, k, cfgtags[k].ConnectionString)
 		}
 	}
 
