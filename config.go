@@ -26,7 +26,7 @@ func RegisterDriver(key string, driver Driver) {
 	mDriverMap.Unlock()
 }
 
-// Datasource defines a databse connection in by the
+// Datasource defines a database connection using the
 // Driver name and a connection string for use by the
 // underlying sql driver. The DriverName must be registered
 // or the TunnelConfig.OpenDB will return an error.
@@ -62,7 +62,7 @@ func parsePubKey(b []byte) (ssh.PublicKey, error) {
 }
 
 // TunnelConfig describes an ssh connection to a remote host and the databases
-// accessed via the connection
+// accessed via the connection.  See the example_config_test.go file for examples.
 type TunnelConfig struct {
 	// address of remote server must be in the form "host:port", "host%zone:port",
 	// "[host]:port" or "[host%zone]:port".  See func net.Dial for a description of
@@ -87,6 +87,10 @@ type TunnelConfig struct {
 	IgnoreDeadlines bool `yaml:"ignore_deadlines,omitempty" json:"ignore_deadlines,omitempty"`
 	// a map of ConnDefinitions for each db connection using the tunnel.  Each dsn will return a corresponding *sql.DB
 	Datasources map[string]Datasource `yaml:"datasources,omitempty" json:"datasources,omitempty"`
+
+	// database connection list with mutex for protection
+	m     sync.Mutex
+	dbMap map[string]*sql.DB
 }
 
 // ConfigError used to describe errors when opening
@@ -208,12 +212,33 @@ func (tc *TunnelConfig) validate() error {
 	return nil
 }
 
+// DB returns an open DB based up the datasource defined by the name
+// in the TunnelConfig
+func (tc *TunnelConfig) DB(dbname string) (*sql.DB, error) {
+
+	mp, err := tc.DatabaseMap()
+	if err != nil {
+		return nil, err
+	}
+	db, ok := mp[dbname]
+	if !ok {
+		return nil, tc.newErr(21, "", fmt.Sprintf("no database with name %s found in TunnelConfig", dbname))
+	}
+	return db, nil
+}
+
 // DatabaseMap returns *sql.DBs returns a map of *sql.DBs based upon
 // the DatabaseMap field. Either all dbs defined in the config are
 // returned with no error or no db is returned if an error occurs.
-// Tunnels connects in a lazy fashion so the connections are not
-// created until needed.
+// Tunnels datasources connect in a lazy fashion so that the connections
+// are not until a database command is called.
 func (tc *TunnelConfig) DatabaseMap() (map[string]*sql.DB, error) {
+	tc.m.Lock()
+	defer tc.m.Unlock()
+	if tc.dbMap != nil {
+		return tc.dbMap, nil
+	}
+
 	if err := tc.validate(); err != nil {
 		return nil, err
 	}
@@ -227,13 +252,12 @@ func (tc *TunnelConfig) DatabaseMap() (map[string]*sql.DB, error) {
 		return nil, tc.newErr(9, "", fmt.Sprintf("new tunnel error: %v", err)).setErr(err)
 	}
 	tun.IgnoreSetDeadlineRequest(tc.IgnoreDeadlines)
-	var dbs = make(map[string]*sql.DB)
+	tc.dbMap = make(map[string]*sql.DB)
 
 	for nm, dataSource := range tc.Datasources {
 		dsn := dataSource.ConnectionString
 		if dsn == "" {
-			closeDBs(dbs)
-			tun.Close()
+			tc.closeDBs(tun)
 			return nil, tc.newErr(13, dsn, fmt.Sprintf("%s db has empty datasourcename", nm))
 		}
 		tunnelDriver, err := dataSource.Driver()
@@ -242,17 +266,17 @@ func (tc *TunnelConfig) DatabaseMap() (map[string]*sql.DB, error) {
 		}
 		sqlconn, err := tun.OpenConnector(tunnelDriver, dsn)
 		if err != nil {
-			closeDBs(dbs)
-			tun.Close()
+			tc.closeDBs(tun)
 			return nil, tc.newErr(10, dsn, fmt.Sprintf("[%s] %s openconnector error: %v", nm, dataSource.DriverName, err)).setErr(err)
 		}
-		dbs[nm] = sql.OpenDB(sqlconn)
+		tc.dbMap[nm] = sql.OpenDB(sqlconn)
 	}
-	return dbs, nil
+	return tc.dbMap, nil
 }
 
-func closeDBs(dblist map[string]*sql.DB) {
-	for _, db := range dblist {
+func (tc *TunnelConfig) closeDBs(tun *Tunnel) {
+	for _, db := range tc.dbMap {
 		db.Close()
 	}
+	tun.Close()
 }

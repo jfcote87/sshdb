@@ -47,7 +47,7 @@ func ExampleNew() {
 		nettype      string
 		dbServerAddr string
 	}{
-		{"tcp", "local:3306"},          // local database on remote server tcp connection
+		{"tcp", "localhost:3306"},      // local database on remote server tcp connection
 		{"unix", "/tmp/mysql.sock"},    // local database on remote server via unix socket
 		{"tcp", "db.example.com:3306"}, // connect to db.example.com db from remote server skirt around a firewall
 	}
@@ -72,8 +72,8 @@ func ExampleNew() {
 	}
 }
 
-// ExampleNew_multiplehosts demonstrates how
-// connect to multiple remote hosts simultaneously
+// ExampleNew_multiplehosts demonstrates how to connect
+// multiple remote database servers via a single ssh connection
 func ExampleNew_multipledbservers() {
 	var (
 		// values used in connecting remote host

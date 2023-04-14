@@ -52,16 +52,16 @@ datasources:
 	if err := yaml.Unmarshal([]byte(cfg_yaml00), &config); err != nil {
 		log.Fatalf("yaml decode failed: %v", err)
 	}
-	dbs, err := config.DatabaseMap()
-	if err != nil {
-		log.Fatalf("opendbs fail: %v", err)
-	}
-	for nm, db := range dbs {
+	for nm := range config.Datasources {
+		db, err := config.DB(nm)
+		if err != nil {
+			log.Fatalf("opendbs fail: %v", err)
+		}
+		defer db.Close()
 		msg := "ping success"
 		if err := db.Ping(); err != nil {
 			msg = fmt.Sprintf("%v", err)
 		}
 		log.Printf("%s %s", nm, msg)
-		defer db.Close()
 	}
 }

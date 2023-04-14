@@ -20,8 +20,10 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// A Driver creates connectors that use the passed dialer
-// to make connections via the ssh tunnel.
+// Driver creates a Connector for a specific database type
+// using the dialer passed from a Tunnel and a dsn string that
+// defines a connection from the remote server to the desired
+// database.
 //
 // This package includes drivers for mysql, mssql, postgress (v3 and v4).
 type Driver interface {
@@ -44,11 +46,9 @@ func (d DialerFunc) DialContext(ctx context.Context, net, addr string) (net.Conn
 
 // New returns a Tunnel based upon the ssh clientConfig for creating new connectors/connections
 // via an ssh client connection.  The tunnel can host multiple db connections to different
-// database servers. The tunnelDriver is a sshdb.Driver for a specific database type. For included
-// implementations (mysql, mssql, pgx and pgx4) use <package name>.TunnelDriver.
-// remoteHostPort defines the remoteanother ssh server address and must be in the form "host:port",
-// "host%zone:port", [host]:port" or "[host%zone]:port".  See func net.Dial for a more
-// detailed description of the hostport format.
+// database servers. the remoteHostPort defines the remote ssh server address and must be in
+// the form "host:port", "host%zone:port", [host]:port" or "[host%zone]:port".  See func net.Dial
+// for a more detailed description of the hostport format.
 func New(clientConfig *ssh.ClientConfig, remoteHostPort string) (*Tunnel, error) {
 	if clientConfig == nil {
 		return nil, errors.New("clientConfig may not be nil")
@@ -100,7 +100,7 @@ func (tun *Tunnel) IgnoreSetDeadlineRequest(val bool) {
 // OpenConnector fulfills the driver DriverContext interface and returns a new
 // db connection via the ssh client connection.  The dataSourceName should follow
 // rules of the base database and must create the connection as if connecting from
-// the remote ssh connection.
+// the remote ssh server.
 func (tun *Tunnel) OpenConnector(tunnelDriver Driver, dataSourceName string) (driver.Connector, error) {
 	tun.mConn.Lock()
 	defer tun.mConn.Unlock()
@@ -126,7 +126,7 @@ func (tun *Tunnel) Close() error {
 }
 
 // DialContext creates an ssh client connection to the addr.  sshdb drivers must use this
-// func when creating driver.Connectors.  You may use this func establish "raw" connections
+// func when creating driver.Connectors.  You may use this func to establish "raw" connections
 // to a remote service.
 func (tun *Tunnel) DialContext(ctx context.Context, net, addr string) (net.Conn, error) {
 	// lock sd for the duration
