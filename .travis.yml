@@ -5,6 +5,7 @@ go:
   - 1.20.x
 sudo: false
 before_install:
+  - go mod download golang.org/x/lint
   - go install golang.org/x/lint/golint
 script:
   - test -z "`gofmt -l .`"
