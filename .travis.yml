@@ -5,7 +5,7 @@ go:
   - 1.20.x
 sudo: false
 before_install:
-  - go get -u golang.org/x/lint/golint
+  - go install golang.org/x/lint/golint
 script:
   - test -z "`gofmt -l .`"
   - test -z "`golint ./...`"
