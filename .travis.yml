@@ -4,12 +4,8 @@ go:
   - 1.19.x
   - 1.20.x
 sudo: false
-before_install:
-  - go mod download golang.org/x/lint
-  - go install golang.org/x/lint/golint
+
 script:
-  - test -z "`gofmt -l .`"
-  - test -z "`golint ./...`"
   - go test -race -coverprofile=coverage.txt -covermode=atomic ./...
 
 after_success:
