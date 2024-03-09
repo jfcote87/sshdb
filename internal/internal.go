@@ -1,3 +1,5 @@
+// Package internal contains a LoadTunnelConfig
+// function that reads either a json or yaml representation of a sshdb.TunnelConfig
 package internal
 
 import (

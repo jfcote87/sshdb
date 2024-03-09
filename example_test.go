@@ -62,6 +62,7 @@ func ExampleNew() {
 			log.Printf("open connector failed %s - %v", dsn, err)
 			continue
 		}
+
 		db := sql.OpenDB(connector)
 		defer db.Close()
 
