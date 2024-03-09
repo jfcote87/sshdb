@@ -8,6 +8,7 @@ require (
 	github.com/jackc/pgconn v1.13.0
 	github.com/jackc/pgx v3.6.2+incompatible
 	github.com/jackc/pgx/v4 v4.17.2
+	github.com/sijms/go-ora/v2 v2.8.9
 	golang.org/x/crypto v0.5.0
 	gopkg.in/yaml.v3 v3.0.1
 )

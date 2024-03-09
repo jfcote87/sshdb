@@ -83,7 +83,7 @@ func (c *connector) Driver() driver.Driver {
 	return c.driver
 }
 
-func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
+func (c *connector) Connect(_ context.Context) (driver.Conn, error) {
 	return c.driver.Open(c.nm)
 }
 

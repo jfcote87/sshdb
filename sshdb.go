@@ -128,7 +128,7 @@ func (tun *Tunnel) Close() error {
 // DialContext creates an ssh client connection to the addr.  sshdb drivers must use this
 // func when creating driver.Connectors.  You may use this func to establish "raw" connections
 // to a remote service.
-func (tun *Tunnel) DialContext(ctx context.Context, net, addr string) (net.Conn, error) {
+func (tun *Tunnel) DialContext(ctx context.Context, _, addr string) (net.Conn, error) {
 	// lock sd for the duration
 	tun.m.Lock()
 	defer tun.m.Unlock()

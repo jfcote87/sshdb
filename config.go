@@ -17,7 +17,7 @@ import (
 var driverMap = make(map[string]Driver)
 var mDriverMap sync.Mutex
 
-// RegisterDriver associates abdatabase's Driver interface
+// RegisterDriver associates a database's Driver interface
 // with the key.  This allows a TunnelConfig to handle
 // multiple database types per host connection.
 func RegisterDriver(key string, driver Driver) {
