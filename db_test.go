@@ -85,7 +85,7 @@ func (c *Conn) Ping(ctx context.Context) error {
 		return errlist{err00, err01, err02}
 	}
 	buff := []byte("0123456789012345678901234567890123456789012345678901234567890123ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
-	for i := 0; i < 5000; i++ {
+	for i := 0; i < 10000; i++ {
 		if _, err := c.Write(buff); err != nil {
 			return err
 		}

@@ -111,7 +111,6 @@ func (d *directTCPServer) start() (func(), error) {
 	}
 	// one for each mock and one for sshServerListener
 	d.wg.Add(len(mockListeners) + 1)
-
 	go func() {
 		// Accept all connections
 		for {
@@ -140,6 +139,7 @@ func (d *directTCPServer) start() (func(), error) {
 		for _, ml := range mockListeners {
 			_ = ml.l.Close()
 		}
+
 		d.wg.Wait()
 	}, nil
 
@@ -152,6 +152,8 @@ func (d *directTCPServer) handleChannels(chans <-chan ssh.NewChannel) {
 	}
 
 }
+
+var zcnt int
 
 func (d *directTCPServer) handleChannel(newChannel ssh.NewChannel) {
 	// expect a channel type of "direct-tcpip"
@@ -184,9 +186,12 @@ func (d *directTCPServer) handleChannel(newChannel ssh.NewChannel) {
 		return
 	}
 	go ssh.DiscardRequests(requests)
-
 	d.wg.Add(1)
 	// Prepare teardown function
+	//var mx sync.Mutex
+
+	var once sync.Once
+
 	close := func() {
 		connection.Close()
 		rconn.Close()
@@ -194,7 +199,6 @@ func (d *directTCPServer) handleChannel(newChannel ssh.NewChannel) {
 	}
 
 	//pipe session between sockets
-	var once sync.Once
 	go func() {
 		_, _ = io.Copy(connection, rconn)
 		once.Do(close)
@@ -218,14 +222,14 @@ func (d *directTCPServer) mockDBServer(laddr string) (net.Listener, error) {
 	// Close the listener when the application closes.
 	go func() {
 		defer d.wg.Done()
-		for i := 0; ; i++ {
+		for {
 			// Listen for an incoming connection.
 			conn, err := l.Accept()
 			if err != nil {
 				break
 			}
 			// Handle connections in a new goroutine.
-			defer conn.Close()
+			//defer conn.Close()
 			go mockDBPingHandler(conn)
 		}
 	}()
@@ -255,5 +259,6 @@ func mockDBPingHandler(conn net.Conn) {
 			}
 			bcnt += cnt
 		}
+		bcnt = 0
 	}
 }

@@ -109,7 +109,7 @@ func (cfg *testTunnelConfig) testConnectPing(t *testing.T) {
 	testLen := len(connectTests)
 	ptp := &pingTestParams{
 		cfg: cfg,
-		dbs: make([]*sql.DB, len(connectTests)),
+		dbs: make([]*sql.DB, testLen),
 	}
 	defer closeDBs(ptp.dbs)
 

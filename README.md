@@ -3,21 +3,29 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/jfcote87/sshdb.svg)](https://pkg.go.dev/github.com/jfcote87/sshdb) [![Build Status](https://app.travis-ci.com/jfcote87/sshdb.svg?branch=main)](https://app.travis-ci.com/jfcote87/sshdb) [![codecov](https://codecov.io/gh/jfcote87/sshdb/branch/main/graph/badge.svg?token=6WUH2GPZ0T)](https://codecov.io/gh/jfcote87/sshdb) [![Go Report Card](https://goreportcard.com/badge/github.com/jfcote87/sshdb)](https://goreportcard.com/report/github.com/jfcote87/sshdb)
 
 
-A pure go library that provides an ssh wrapper (using golang.org/x/crypt) for connecting a database client to a remote database. 
+A pure go library that allows connections to remote sql databases via ssh tunnels. The package
+works with db packages by creating an ssh connection and a dial function for connecting to the 
+tunnel. 
 
 ## install
 
-go get -v github.com/jfcote87
+go get -v github.com/jfcote87/sshdb
 
 ## making connections
 
-The workflow is straight forward.  Create a Tunnel and then
-create sql.DB connection using the tunnel.  The first method for 
-accomplishing this is by creating an ssh client connection and
-create a tunnel using the connection.  Finally open a *sql.DB
-using a dataSourceName string.  The dsn should defing a connection
-from the ssh remote server and the desired database.
+To setup connections, create a Tunnel object with the sshdb.New method using an ssh.ClientConfig (see documentation on the "golang.org/x/crypto/ssh" package) and the remote address of the ssh server.  The returned Tunnel is safe for concurrent use by multiple goroutines and maintains its own pool of db connections. Thus, the New function should be called just once for each remote server. It is rarely necessary to close a Tunnel.
 
+Create a dsn string using addresses based upon the remote server.  The connections will be created on the remote ssh server to the database server.  Select the appropriate driver for your database.  If the database is not in included drivers, review the sshdb.Driver interface{} and the existing driver code.  Essentially the passed dialer in the OpenConnector function should replace the default dialer for the db.  Use the db.Connector to create a sql.DB object.
+
+Example for creating connections may be found in the code below and the example_test.go file.
+
+```
+imports (
+	"golang.org/x/crypto/ssh"
+	"github.com/jfcote87/sshdb"
+)
+
+func main() {
 	exampleCfg := &ssh.ClientConfig{
 		User:            "jfcote87",
 		Auth:            []ssh.AuthMethod{ssh.Password("my second favorite password")},
@@ -38,26 +46,8 @@ from the ssh remote server and the desired database.
 		return fmt.Errorf("open connector failed %s - %v", dsn, err)
 	}
 	db := sql.OpenDB(connector)
-
-You can also use a TunnelConfig defines the ssh tunnel as well as 
-one or more database connections using database/driver names and
-dataSourceName definitions.  Example TunnelConfig definitions may
-be found in the example_config_test.db file and in the 
-testfiles/config directory.
-
-	var config *sshdb.TunnelConfig
-	if err := yaml.Unmarshal([]byte(cfg_yaml), &config); err != nil {
-		log.Fatalf("yaml decode failed: %v", err)
-	}
-	dbs, err := config.DatabaseMap()
-	if err != nil {
-		log.Fatalf("opendbs fail: %v", err)
-	}
-	dbs["remoteDB"].Ping()
-
-
-
-	
+}
+```
 
 ## testing
 
